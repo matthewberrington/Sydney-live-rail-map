@@ -3,7 +3,7 @@ from shapely.ops import linemerge, unary_union
 import json
 import matplotlib.pyplot as plt
 import numpy as np
-from utils import get_total_length, degrees_to_metres
+from utils import degrees_to_metres
 import pickle
 
 
