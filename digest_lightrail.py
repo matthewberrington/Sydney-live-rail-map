@@ -6,7 +6,7 @@ import numpy as np
 from utils import get_total_length, degrees_to_metres
 import pickle
 
-def split_track_by_stations_inclusive(xs, ys, stations):
+def split_track_by_stations(xs, ys, stations):
     line = LineString(list(zip(xs, ys)))
     line_length = line.length
 
@@ -151,6 +151,18 @@ def get_LineStrings(target_ref):
                     linestrings.append(LineString(geom["coordinates"]))
     return linestrings
 
+def merge_linestrings(linestrings):
+    # return merged geometry (LineString or MultiLineString)
+    merged = linemerge(unary_union(linestrings))
+    return merged
+
+def extract_coords_from_merged(merged, idx=0):
+    # helper to get coords list for a particular part when merged is MultiLineString
+    if merged.geom_type == "MultiLineString":
+        return list(merged.geoms[idx].coords)
+    else:
+        return list(merged.coords)
+
 def merge_and_extract_coords(linestrings):
     merged = linemerge(unary_union(linestrings))
     if merged.geom_type == "MultiLineString":
@@ -160,23 +172,27 @@ def merge_and_extract_coords(linestrings):
     return ordered_coords
 
 if __name__ == "__main__":
-    # -----------------------------
-    # Load GeoJSON
-    # -----------------------------
-    with open("export.geojson") as f:
+    with open("lightrail.geojson") as f:
         data = json.load(f)
 
-    L2_linestring = get_LineStrings("L2")
-    L3_linestring = get_LineStrings("L3")
+    L2_linestrings = get_LineStrings("L2")
+    L3_linestrings = get_LineStrings("L3")
 
-    L2_coords = merge_and_extract_coords(L2_linestring)[0] #0 is for tracks bound for Randwick, 1 is for tracks bound for Circular Quay
-    L3_coords = merge_and_extract_coords(L3_linestring)[1] #0 is for tracks bound for Circular Quay, 1 is for tracks bound for Juniors Kingsford, 
+    L2_merged = merge_linestrings(L2_linestrings)
+    L3_merged = merge_linestrings(L3_linestrings)
+
+    L2_coords = extract_coords_from_merged(L2_merged, 0)  # 0 = Randwick-bound
+    L3_coords = extract_coords_from_merged(L3_merged, 1)  # 1 = Juniors-Kingsford bound
+
     coords = L2_coords + L3_coords
     lons, lats = map(list, zip(*coords))
 
     origin = ((np.min(lons) + np.max(lons))/2, (np.min(lats) + np.max(lats))/2)
     xs_L2, ys_L2 = degrees_to_metres(*zip(*L2_coords), origin)
     xs_L3, ys_L3 = degrees_to_metres(*zip(*L3_coords), origin)
+
+    L2_line = LineString(zip(xs_L2, ys_L2))
+    L3_line = LineString(zip(xs_L3, ys_L3))
 
     stations_L2 = []
     for lon, lat, name in get_station_coords("L2"):
@@ -186,16 +202,13 @@ if __name__ == "__main__":
         stations_L3.append((*degrees_to_metres(lon, lat, origin), name))
 
     
-
-    # # -----------------------------
-    # # Split by stations
-    # # -----------------------------
-    segments_L2, projections_L2 = split_track_by_stations_inclusive(xs_L2, ys_L2, stations_L2)
-    segments_L3, projections_L3 = split_track_by_stations_inclusive(xs_L3, ys_L3, stations_L3)
+    segments_L2, projected_stations_L2 = split_track_by_stations(xs_L2, ys_L2, stations_L2)
+    segments_L3, projected_stations_L3 = split_track_by_stations(xs_L3, ys_L3, stations_L3)
 
     # # -----------------------------
     # # Calculate positions of LEDs
     # # -----------------------------
+    
     LED_geometry = {}
     LED_idx = 0
     minimum_spacing = 75
@@ -209,9 +222,7 @@ if __name__ == "__main__":
             angle = tangent_angle_at_point(seg['line'], x_LED[i], y_LED[i], degrees = True)
             LED_geometry['D'+str(LED_idx+100)] = (x_LED[i], y_LED[i], angle)
             LED_idx += 1
-    # Note: Am mising the last node at end of L2 and L3
-
-
+    # Note: Am missing the last node at end of L2 and L3
 
     with open('LED_geometry.pckl', 'wb') as file:
         pickle.dump(LED_geometry, file)
@@ -220,19 +231,20 @@ if __name__ == "__main__":
     # # Calculate positions of stations
     # # -----------------------------
 
-    L2_line = LineString(list(zip(xs_L2, ys_L2)))
-    L3_line = LineString(list(zip(xs_L3, ys_L3)))
     station_geometry = {}
     station_idx = 0
 
-    for p in projections_L2:
-        angle_station = tangent_angle_at_point(L2_line, p['point'].x, p['point'].y, degrees = True)
-        station_geometry[station_idx] = (p['point'].x, p['point'].y, angle_station, p['name'], 'L2')
-        station_idx += 1
-
-    for p in projections_L3:
-        angle_station = tangent_angle_at_point(L3_line, p['point'].x, p['point'].y, degrees = True)
-        station_geometry[station_idx] = (p['point'].x, p['point'].y, angle_station, p['name'], 'L3')
+    for p in projected_stations_L2:
+        distance_to_L2 = p['point'].distance(L2_line)
+        distance_to_L3 = p['point'].distance(L3_line)
+        if distance_to_L2 < distance_to_L3:
+            line = L2_line
+            line_name = 'L2'
+        else:
+            line = L3_line
+            line_name = 'L3'
+        angle_station = tangent_angle_at_point(line, p['point'].x, p['point'].y, degrees = True)
+        station_geometry[station_idx] = (p['point'].x, p['point'].y, angle_station, p['name'], line_name)
         station_idx += 1
 
     with open('station_geometry.pckl', 'wb') as file:
@@ -242,6 +254,7 @@ if __name__ == "__main__":
     # # -----------------------------
     # # Plot
     # # -----------------------------
+    
     plt.figure()
     plt.plot(xs_L2, ys_L2, 'lightgray', lw=2, label="L2 Track")
     plt.plot(xs_L3, ys_L3, 'lightgray', lw=2, label="L3 Track")
@@ -251,10 +264,10 @@ if __name__ == "__main__":
 
     # plt.plot(xs_L3_combined, ys_L3_combined, 'green', lw=2, label="L3 Track (with shared section)")
 
-    for p in projections_L2:
+    for p in projected_stations_L2:
         plt.scatter(p['point'].x, p['point'].y, color='red')
         plt.text(p['point'].x, p['point'].y, p['name'], fontsize=8, ha='left')
-    for p in projections_L3:
+    for p in projected_stations_L3:
         plt.scatter(p['point'].x, p['point'].y, color='red')
         plt.text(p['point'].x, p['point'].y, p['name'], fontsize=8, ha='left')
 
