@@ -11350,15 +11350,55 @@
 		)
 		(uuid "22c66699-95da-49e5-826e-e9ce05da68aa")
 	)
-	(text "+5V is the power rail for the LEDs\nIt is used to keep the Capacitance on the USB input to 10uF"
+	(text "+5V is the power rail for the LEDs\nVBUS cannot see more than 10 uF, otherwise maximum inrush current is exceeded\nSolution is to slowly turn the P channel MOSFET on.\nP channel MOSFET is ohmic when gate is lower than source.\nBy slowly turning on Q2, capacitance can be added while keeping inrush low\nRC lowpass filter on Q2 base has t_c = 0.6s"
 		(exclude_from_sim no)
-		(at 60.96 129.54 0)
+		(at 61.214 131.826 0)
 		(effects
 			(font
 				(size 1.27 1.27)
 			)
 		)
 		(uuid "43c8a7f8-970b-4876-b727-bc32c301fb0d")
+	)
+	(text "Ambient light sensor\nI2C comunication. Effective 16 bit resolution."
+		(exclude_from_sim no)
+		(at 256.032 154.686 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+		(uuid "60426232-804e-4c32-b0de-06b4ddd58fd0")
+	)
+	(text "UMW ET6226M for seven segment?\n"
+		(exclude_from_sim no)
+		(at 63.754 65.024 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+		(uuid "8c737812-dd23-4795-b222-a5a2f24be853")
+	)
+	(text "3V3 voltage regulator"
+		(exclude_from_sim no)
+		(at 104.648 19.05 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+		(uuid "a85abc96-c9bd-49af-89bb-24eac88d657b")
+	)
+	(text "Buffer CMOS Logic Level Shifter\nConverts to 5V for LEDs"
+		(exclude_from_sim no)
+		(at 60.706 196.088 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+		(uuid "ab96021f-e1a5-4221-bb5e-aa26f2cbf426")
 	)
 	(text "3.42~3.78V"
 		(exclude_from_sim no)
@@ -11369,6 +11409,16 @@
 			)
 		)
 		(uuid "d0680462-e5da-42a6-9812-533928ab1840")
+	)
+	(text "~500Ω recommended by LED manufacturer\n"
+		(exclude_from_sim no)
+		(at 100.838 172.466 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+		(uuid "f23928f7-ea01-4c35-bcd5-9345cf02f20e")
 	)
 	(text "+5V is the power rail for the LEDs\nIt is used to keep the Capacitance on the USB input to 10uF"
 		(exclude_from_sim no)
@@ -13483,7 +13533,7 @@
 		)
 		(uuid "0931902c-bde3-4509-a10b-89da204994aa")
 	)
-	(label "LED_POWER_EN"
+	(label "LED_POWER_ENABLE"
 		(at 251.46 50.8 0)
 		(effects
 			(font
@@ -13633,7 +13683,7 @@
 		)
 		(uuid "9708decd-2b12-4a2a-a8ed-cf7e86a70775")
 	)
-	(label "LED_POWER_EN"
+	(label "LED_POWER_ENABLE"
 		(at 33.02 106.68 180)
 		(effects
 			(font
