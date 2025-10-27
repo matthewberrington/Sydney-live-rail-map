@@ -11,3 +11,7 @@ Plan of features:
 - [ ] LEDs showing status of connecting rail network (T1, T2, T3, T4, T8, M1, M3, L1)
 - [ ] Wi-Fi connectivity
 - [ ] Adjustable brightness
+- [ ] Train icons at interchanges on silkscreen (T in a circle)
+- [ ] L1 line on silkscreen
+- [ ] Centenial park 
+- [ ] Sydney Harbour bridge
