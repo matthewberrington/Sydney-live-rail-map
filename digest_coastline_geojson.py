@@ -44,23 +44,18 @@ if __name__ == '__main__':
         coastline_geometry.append((xs_coastline, ys_coastline))
         plt.plot(xs_coastline, ys_coastline)
 
-    for seg in ordered_segments:
-        xs_coastline, ys_coastline = degrees_to_metres(*zip(*seg), origin)
-        xy = zip(xs_coastline, ys_coastline)
-        for i in range(len(xs_coastline)-1):
-            x0 = xs_coastline[i]
-            y0 = ys_coastline[i]
-            x1 = xs_coastline[i+1]
-            y1 = ys_coastline[i+1]
-            if within_boundary(x0, y0, width_metres, height_metres) or within_boundary(x1, y1, width_metres, height_metres):
-                coastline_geometry_ROI.append(([x0, x1], [y0, y1]))
-
-    for [x0, x1], [y0, y1] in coastline_geometry_ROI:
-        plt.plot([x0, x1], [y0, y1], 'k')
+    xs, ys = coastline_geometry[0]
+    plt.plot(xs[500:3000],ys[500:3000], c='k')
     plt.gca().axis('equal')
+    coastline_geometry_ROI = [xs[500:3000],ys[500:3000]]
 
     with open('coastline_geometry.pckl', 'wb') as file:
         pickle.dump(coastline_geometry_ROI, file)
+
+    clark_island_geometry = coastline_geometry[14]
+    plt.plot(*clark_island_geometry, c='k')
+    with open('clark_island_geometry.pckl', 'wb') as file:
+        pickle.dump(clark_island_geometry, file)
 
     plt.fill_between([-width_metres/2, width_metres/2], -height_metres/2, height_metres/2, color='lightgray', alpha=0.5)
     plt.show()
