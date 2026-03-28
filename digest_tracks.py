@@ -1,8 +1,9 @@
+from Station import Station
+from Track import Track
 from shapely.geometry import LineString, Point
 from shapely.ops import linemerge, unary_union
 import json
 import matplotlib.pyplot as plt
-from utils import get_total_length, degrees_to_metres
 import pickle
 import numpy as np
 
@@ -42,72 +43,56 @@ def cut_line(line, distance):
             )
     return None
 
-def project_stations_onto_track(coords, stations):
-    line = LineString(list(zip(*coords)))
+def project_stations_onto_track(track, stationsA, stationsB):
+    stations = get_station_midpoint(stationsA, stationsB)
 
     # Project each station onto the line
-    stations_projected = {}
-    for station_name in stations.keys():
-        x, y = stations[station_name]
-        pt = Point(x, y)
-        s = line.project(pt)
-        proj_pt = line.interpolate(s)
-        stations_projected[station_name] = list(proj_pt.coords[0])
+    stations_projected = []
+    for station in stations:
+        pt = Point(station.longitude, station.latitude)
+        s = track.line_spherical.project(pt)
+        proj_pt = track.line_spherical.interpolate(s)
+        station_projected = Station(station.name, station.line, *proj_pt.coords[0], station.map_origin, station.scale)
+        stations_projected.append(station_projected)
+    
+    for station in stations_projected:
+        station.orientation = get_station_orientations(track, station)
+
     return stations_projected
 
-def split_track_by_stations_inclusive(coords, stations):
-    line = LineString(list(zip(*coords)))
-    line_length = line.length
+def split_track_by_stations_inclusive(track, stations):
 
-    # Project each station onto the line
-    projections = []
-    for station_name in stations.keys():
-        x, y = stations[station_name]
-        pt = Point(x, y)
-        s = line.project(pt)
-        proj_pt = line.interpolate(s)
-        projections.append({'name': station_name, 's': s, 'point': proj_pt})
-
-    # Add start and end points of the line as virtual "stations"
-    projections.append({'name': '__START__', 's': 0.0, 'point': line.interpolate(0.0)})
-    projections.append({'name': '__END__', 's': line_length, 'point': line.interpolate(line_length)})
-
-    # Sort by distance along the line
-    projections.sort(key=lambda p: p['s'])
-
+    major_nodes = stations
     # Create segments between consecutive projected points
     segments = []
-    for i in range(len(projections) - 1):
-        start_s = projections[i]['s']
-        end_s = projections[i + 1]['s']
-        segment = cut_line_between(line, start_s, end_s)
+    for i in range(len(major_nodes) - 1):
+        node1 = major_nodes[i]
+        node2 = major_nodes[i+1]
+        point1 = Point(*node1.get_displacement())
+        point2 = Point(*node2.get_displacement())
+        length1 = track.get_line_cartesian().project(point1)
+        length2 = track.get_line_cartesian().project(point2)
+        segment = cut_line_between(track.get_line_cartesian(), length1, length2)
         segments.append({
-            'from': projections[i]['name'],
-            'to': projections[i + 1]['name'],
+            'from': node1.name,
+            'to': node2.name,
             'line': segment
         })
 
     return segments
 
-def get_station_orientations(coords, stations):
-    line = LineString(list(zip(*coords)))
-
-    # Project each station onto the line
-    orientations = []
-    for station_name in stations.keys():
-        x, y = stations[station_name]
-        pt = Point(x, y)
-        s = line.project(pt)
-        p1 = line.interpolate(s-0.01)
-        p2 = line.interpolate(s+0.01)
-        slope = (p2.y - p1.y) / (p2.x - p1.x)
-        if p1.x < p2.x:
-            angle = np.arctan(slope)
-        else:
-            angle = np.arctan(slope) + np.pi
-        orientations.append(angle)
-
-    return orientations
+def get_station_orientations(track, station):
+    x, y = station.get_displacement()
+    pt = Point(x, y)
+    s = track.line_cartesian.project(pt)
+    p1 = track.line_cartesian.interpolate(s-0.01)
+    p2 = track.line_cartesian.interpolate(s+0.01)
+    slope = (p2.y - p1.y) / (p2.x - p1.x)
+    if p1.x < p2.x:
+        orientation = np.arctan(slope)
+    else:
+        orientation = np.arctan(slope) + np.pi
+    return orientation
 
 def to_ordered_coords(segments):
     merged = linemerge(unary_union(segments))
@@ -129,12 +114,11 @@ def evenly_spaced_points(xs, ys, N):
     y_interp = np.interp(target_d, cumulative, ys)
     return x_interp, y_interp
 
-def get_segments(ref, to):
+def get_track(ref, to, origin):
     segments = []
     for feature in data["features"]:
         geom = feature["geometry"]
         geom_type = geom["type"]
-        coords = geom["coordinates"]
         properties = feature["properties"]
 
         if geom_type == "LineString":
@@ -142,103 +126,153 @@ def get_segments(ref, to):
                 if properties["@relations"][0]["reltags"]["to"] == to:
                     if properties["@relations"][0]["reltags"]["ref"] == ref:
                         segments.append(LineString(geom["coordinates"]))
-    merged = linemerge(unary_union(segments))
-    return list(merged.coords)
+    lon, lat = list(zip(*to_ordered_coords(segments)))
+    track = Track(ref, lon, lat, origin)
+    return track
 
-def get_stations(ref, to):
-    stations = {}
+def get_stations(track, destination = None, origin = None):
+    stations = []
     for feature in data["features"]:
         geom = feature["geometry"]
         props = feature["properties"]
         if geom["type"] == "Point":
             if "railway" in props.keys() and props["railway"] == 'stop':
                 if '@relations' in props.keys():
-                    if props["@relations"][0]["reltags"]["to"] == to:
-                        if props["@relations"][0]["reltags"]["ref"] == ref:
-                            stations[props["name"]] = geom["coordinates"]
+                    if props["@relations"][0]["reltags"]["to"] == destination or destination == None:
+                        line = props["@relations"][0]["reltags"]["ref"]
+                        if props["@relations"][0]["reltags"]["ref"] == track.name:
+                            station = Station(props["name"], line, *geom["coordinates"], origin)
+                            stations.append(station)
+    stations.sort(key=lambda station: track.distance_along(station))
     return stations
 
-def get_midline_coords(segments1, segments2, N, flip = True):
-    x1_interp, y1_interp = evenly_spaced_points(*zip(*segments1),N)
-    x2_interp, y2_interp = evenly_spaced_points(*zip(*segments2),N)
+def get_track_midline(track1, track2, N, flip = True):
+    lon1_interp, lat1_interp = evenly_spaced_points(track1.longitudes, track1.latitudes, N)
+    lon2_interp, lat2_interp = evenly_spaced_points(track2.longitudes, track2.latitudes, N)
     if flip:
-        x2_interp = np.flip(x2_interp)
-        y2_interp = np.flip(y2_interp)
-    return (x1_interp + x2_interp)/2, (y1_interp + y2_interp)/2
+        lon2_interp = np.flip(lon2_interp)
+        lat2_interp = np.flip(lat2_interp)
+    track = Track(track1.name, (lon1_interp + lon2_interp)/2, (lat1_interp + lat2_interp)/2, track1.map_origin, track1.scale)
+    return track
 
 def get_station_midpoint(stations1, stations2):
-    stations = {}
-    for station_name in stations1.keys():
-        xA, yA = stations1[station_name]
-        xB, yB = stations2[station_name]
-        stations[station_name] = (xA + xB)/2, (yA + yB)/2
+    stations = []
+    for station1 in stations1:
+        station2 = next((s for s in stations2 if s.name == station1.name), None)
+        if station2:
+            mid_lat = (station1.latitude + station2.latitude)/2
+            mid_lon = (station1.longitude + station2.longitude)/2
+            stations.append(Station(station1.name, station1.line, mid_lon, mid_lat, station1.map_origin, station1.scale))
     return stations
 
-def station_degrees_to_metres(stations_deg, origin):
-    stations = {}
-    for key, val in stations_deg.items():
-        stations[key] = degrees_to_metres(*val, origin)
-    return stations
-
+def get_pseudo_stations(stations, track, minimum_distance):
+    pseudo_stations = []
+    for i in range(len(stations)-1):
+        station1 = stations[i]
+        station2 = stations[i+1]
+        l1 = track.distance_along(station1)
+        l2 = track.distance_along(station2)
+        num_pseudo_stations = int((l2 - l1)//minimum_distance) -1
+        delta_l = (l2 - l1)/(num_pseudo_stations+1)
+        for j in range(num_pseudo_stations):
+            l = l1 + (j+1)*delta_l
+            x, y = track.get_line_cartesian().interpolate(l).coords[0]
+            pseudo_station = Station.cartesian(f'__PSEUDO__', track.name, x, y, track.map_origin, track.scale)
+            pseudo_stations.append(pseudo_station)
+    return pseudo_stations
+    
 if __name__ == '__main__':
     with open("export.geojson") as f:
         data = json.load(f)
 
     origin = (151.22289335, -33.8937485)
+    # x_origin = 151.22287115
+    # y_origin = -33.893729
 
     N_interp = 3000
-    L2A_track_deg = get_segments('L2', 'Randwick')
-    L2B_track_deg = get_segments('L2', 'Circular Quay')
-    L2_track_deg = get_midline_coords(L2A_track_deg, L2B_track_deg, N_interp)
-    L2_track_m = degrees_to_metres(*L2_track_deg, origin)
-
-    L3A_track_deg = get_segments('L3', 'Juniors Kingsford')
-    L3B_track_deg = get_segments('L3', 'Circular Quay')
-    L3_track_deg = get_midline_coords(L3A_track_deg, L3B_track_deg, N_interp)
-    L3_track_m = degrees_to_metres(*L3_track_deg, origin)
-
-    L2_stationsA = get_stations('L2', 'Randwick')
-    L2_stationsB = get_stations('L2', 'Circular Quay')
-    L2_stations_deg = get_station_midpoint(L2_stationsA, L2_stationsB)
-    L2_stations_m = station_degrees_to_metres(L2_stations_deg, origin)
-    L2_stations_m = project_stations_onto_track(L2_track_m, L2_stations_m)
-
-    L3_stationsA = get_stations('L3', 'Juniors Kingsford')
-    L3_stationsB = get_stations('L3', 'Circular Quay')
-    L3_stations_deg = get_station_midpoint(L3_stationsA, L3_stationsB)
-    L3_stations_m = station_degrees_to_metres(L3_stations_deg, origin)
-    L3_stations_m = project_stations_onto_track(L3_track_m, L3_stations_m)
-
-    # # -----------------------------
-    # # Split by stations
-    # # -----------------------------
-    segments_L2 = split_track_by_stations_inclusive(L2_track_m, L2_stations_m)
-    segments_L3 = split_track_by_stations_inclusive(L3_track_m, L3_stations_m)
-    orientations_L2 = get_station_orientations(L2_track_m, L2_stations_m)
-    orientations_L3 = get_station_orientations(L3_track_m, L3_stations_m)
+    L2A_track = get_track('L2', 'Randwick', origin)
+    L2B_track = get_track('L2', 'Circular Quay', origin)
+    L2_track = get_track_midline(L2A_track, L2B_track, N_interp)
     
-    plt.figure()
-    plt.plot(*L2_track_m, color = 'lightgrey')
-    plt.plot(*L3_track_m, color = 'lightgrey')
+    L3A_track = get_track('L3', 'Juniors Kingsford', origin)
+    L3B_track = get_track('L3', 'Circular Quay', origin)
+    L3_track = get_track_midline(L3A_track, L3B_track, N_interp)
 
-    for station_coords in L2_stations_m.values():
-        plt.plot(*station_coords, marker = 's', color = 'k')
+    L2_stationsA = get_stations(L2_track, destination = 'Randwick', origin=origin)
+    L2_stationsB = get_stations(L2_track, destination = 'Circular Quay', origin=origin)
+    L2_stations = project_stations_onto_track(L2_track, L2_stationsA, L2_stationsB)
 
-    for station_coords in L3_stations_m.values():
-        plt.plot(*station_coords, marker = 's', color = 'k')
+    L3_stationsA = get_stations(L3_track, destination = 'Juniors Kingsford', origin=origin)
+    L3_stationsB = get_stations(L3_track, destination = 'Circular Quay', origin=origin)
+    L3_stations = project_stations_onto_track(L3_track, L3_stationsA, L3_stationsB)
 
-    for segment in segments_L2:
-        plt.plot(*zip(*list(segment['line'].coords)))
-    
-    for segment in segments_L3:
-        plt.plot(*zip(*list(segment['line'].coords)))
+    ### Define pseudo-stations
+
+    L2_pseudo_stations = get_pseudo_stations(L2_stations, L2_track, minimum_distance = 100)
+    L3_pseudo_stations = get_pseudo_stations(L3_stations, L3_track, minimum_distance = 100)
+
+    plt.plot(*L2_track.get_displacements(), color = 'lightgrey')
+    plt.plot(*L3_track.get_displacements(), color = 'lightgrey')
+        
+    for station in L2_stations + L3_stations:
+        x,y = station.get_displacement()
+        plt.plot(x, y, marker = 's', color = 'r')
+        plt.plot([x, 25*np.cos(station.orientation)], [y, 25*np.sin(station.orientation)], color = 'r')
+    for station in L2_pseudo_stations + L3_pseudo_stations:
+        x,y = station.get_displacement()
+        plt.plot(x, y, marker = '*', color = 'b')
+        plt.plot([x, 25*np.cos(station.orientation)], [y, 25*np.sin(station.orientation)], color = 'b')
 
     plt.gca().axis('equal')
-
-    #TODO: get anble to station
-    t = np.array([0,100])
-    for idx,(x,y) in enumerate(L2_stations_m.values()):
-        theta = orientations_L2[idx]
-        plt.plot(x+np.cos(theta)*t,y+np.sin(theta)*t, 'k')
     plt.show()
+    
+
+    # # -----------------------------
+    # segments_L2 = split_track_by_stations_inclusive(L2_track, L2_stations)
+    # segments_L3 = split_track_by_stations_inclusive(L3_track, L3_stations)
+    # orientations_L2 = get_station_orientations(L2_track, L2_stations)
+    # orientations_L3 = get_station_orientations(L3_track, L3_stations)
+    
+    # plt.figure()
+    # plt.plot(*L2_track, color = 'lightgrey')
+    # plt.plot(*L3_track, color = 'lightgrey')
+
+    # for station_coords in L2_stations_m.values():
+    #     plt.plot(*station_coords, marker = 's', color = 'k')
+
+    # for station_coords in L3_stations_m.values():
+    #     plt.plot(*station_coords, marker = 's', color = 'k')
+
+    # for segment in segments_L2:
+    #     plt.plot(*zip(*list(segment['line'].coords)))
+    
+    # for segment in segments_L3:
+    #     plt.plot(*zip(*list(segment['line'].coords)))
+
+    # plt.gca().axis('equal')
+
+    
+    # t = np.array([0,100])
+    # for idx,(x,y) in enumerate(L2_stations_m.values()):
+    #     theta = orientations_L2[idx]
+    #     plt.plot(x+np.cos(theta)*t,y+np.sin(theta)*t, 'k')
+
+    # station_geometry = {}
+    # for idx, (key, val) in enumerate(L3_stations_m.items()):
+    #     theta = orientations_L3[idx]
+    #     station_geometry[key] = (*val, theta)
+    # for idx, (key, val) in enumerate(L2_stations_m.items()):
+    #     theta = orientations_L2[idx]
+    #     station_geometry[key] = (*val, theta)
+
+    # with open('station_geometry.pckl', 'wb') as file:
+    #     pickle.dump(station_geometry, file)
+    # with open('L2_tracks.pckl', 'wb') as file:
+    #     pickle.dump(L2_track_m, file)
+    # with open('L3_tracks.pckl', 'wb') as file:
+    #     pickle.dump(L3_track_m, file)
+
+
+    # plt.show()
+    
     
