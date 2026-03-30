@@ -48,13 +48,24 @@ class MapProjection:
         longitudes = x / N + phi0
         return longitudes, latitudes
 
-    def map_to_pcb(self, lon, lat):
+    def map_to_pcb(self, map_x, map_y):
         """Converts map coordinates to PCB coordinates."""
-        map_x, map_y = self.geo_to_map(lon, lat)
-        return map_x * self.scale, map_y * self.scale
+        return map_x * self.scale * 1000, -map_y * self.scale * 1000
 
     def pcb_to_map(self, pcb_x, pcb_y):
         """Converts PCB coordinates to map coordinates."""
-        map_x = pcb_x / self.scale
-        map_y = pcb_y /self.scale
+        map_x = pcb_x / self.scale / 1000
+        map_y = -pcb_y /self.scale / 1000
         return map_x, map_y
+    
+    def geo_to_pcb(self, lon, lat):
+        """Converts GPS coordinates to PCB coordinates."""
+        map_x, map_y = self.geo_to_map(lon, lat)
+        pcb_x, pcb_y = self.map_to_pcb(map_x, map_y)
+        return pcb_x, pcb_y
+
+    def pcb_to_geo(self, pcb_x, pcb_y):
+        """Converts PCB coordinates to GPS coordinates."""
+        map_x, map_y = self.pcb_to_map(pcb_x, pcb_y)
+        lon, lat = self.map_to_geo(map_x, map_y)
+        return lon, lat

@@ -8,6 +8,7 @@ class Station:
         self.latitude = latitude
         self.track = track
         self.map_x, self.map_y = self.track.projection.geo_to_map(self.longitude, self.latitude)
+        self.pcb_x, self.pcb_y = self.track.projection.geo_to_pcb(self.longitude, self.latitude)
         # Automatically add itself to the track's list
         self.track.stations.append(self)
 

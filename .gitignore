@@ -7,4 +7,6 @@ KiCAD Project/fp-info-cache
 __pycache__
 rail_venv
 KiCAD Project/Sydney-live-rail-backups
+KiCAD Project/Sydney-live-rail.kicad_sch-bak
+KiCAD Project/~Sydney-live-rail.kicad_sch.lck
 *.pckl

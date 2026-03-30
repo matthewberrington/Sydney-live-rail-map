@@ -173,7 +173,7 @@ if __name__ == '__main__':
     with open("export.geojson") as f:
         data = json.load(f)
 
-    projection = MapProjection(origin_lon = 151.22289335, origin_lat = -33.8937485, scale=1.0)
+    projection = MapProjection(origin_lon = 151.22289335, origin_lat = -33.8937485, scale=1/25000)
     # x_origin = 151.22287115
     # y_origin = -33.893729
 
@@ -189,6 +189,8 @@ if __name__ == '__main__':
     L2_stationsA = get_stations(L2_track, destination = 'Randwick')
     L2_stationsB = get_stations(L2_track, destination = 'Circular Quay')
     L2_stations = project_stations_onto_track(L2_track, L2_stationsA, L2_stationsB)
+    print(L2_stations[0].map_x)
+    print(L2_stations[0].pcb_x)
 
     L3_stationsA = get_stations(L3_track, destination = 'Juniors Kingsford')
     L3_stationsB = get_stations(L3_track, destination = 'Circular Quay')
@@ -196,8 +198,8 @@ if __name__ == '__main__':
 
     ### Define pseudo-stations
 
-    L2_pseudo_stations = get_pseudo_stations(L2_stations, L2_track, minimum_distance = 100)
-    L3_pseudo_stations = get_pseudo_stations(L3_stations, L3_track, minimum_distance = 100)
+    L2_pseudo_stations = get_pseudo_stations(L2_stations, L2_track, minimum_distance = 75)
+    L3_pseudo_stations = get_pseudo_stations(L3_stations, L3_track, minimum_distance = 75)
 
     plt.plot(L2_track.map_x, L2_track.map_y, color = 'lightgrey')
     plt.plot(L3_track.map_x, L3_track.map_y, color = 'lightgrey')
@@ -208,6 +210,18 @@ if __name__ == '__main__':
     for station in L2_pseudo_stations + L3_pseudo_stations:
         plt.plot(station.map_x, station.map_y, marker = '*', color = 'b')
         plt.plot([station.map_x, station.map_x + 25*np.cos(np.deg2rad(station.orientation))], [station.map_y, station.map_y + 25*np.sin(np.deg2rad(station.orientation))], color = 'b')
-
     plt.gca().axis('equal')
+
+    stations = L2_stations + L2_pseudo_stations
+    stations.sort(key=lambda station: station.chainage)
+
+    for station in stations:
+        print(station.map_y)
+
+    with open('stations_geometry.pckl', 'wb') as file:
+        pickle.dump(stations, file)
+    # with open('L2_pseudo_stations_geometry.pckl', 'wb') as file:
+        # pickle.dump(L2_pseudo_stations, file)
+    with open('L2_track_geometry.pckl', 'wb') as file:
+        pickle.dump(L2_track, file)
     plt.show()

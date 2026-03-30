@@ -9,6 +9,41 @@ import math
 import pickle
 from matplotlib import colormaps
 
+def get_net_by_name(name: str):
+    nets = board.get_nets()
+    for net in nets:
+        if net.name == name:
+            return net
+    return None
+    
+def add_via(
+    x: float, y: float, net: str, diameter_mm: float = 0.5, drill_mm: float = 0.3
+):
+    via = Via()
+    net_object = get_net_by_name(net)
+    if net_object is not None:
+        via.position = Vector2.from_xy_mm(x, y)
+        via.diameter = from_mm(diameter_mm)
+        via.drill_diameter = from_mm(drill_mm)
+        via.net = net_object
+        items_to_add.append(via)  # Store the via for later addition
+
+def create_line(line, scale, layer = 'BL_F_SilkS'):
+    segments = []
+    for idx in range(len(line[0])-1):
+        x0 = line[0][idx]
+        x1 = line[0][idx+1]
+        y0 = line[1][idx]
+        y1 = line[1][idx+1]
+        boardSegment = BoardSegment()
+        boardSegment.start = Vector2.from_xy_mm(x0/scale*1000, -y0/scale*1000)
+        boardSegment.end = Vector2.from_xy_mm(x1/scale*1000, -y1/scale*1000)
+        boardSegment.attributes.stroke.width = from_mm(1)
+        # arcTrack.attributes.stroke.style = StrokeLineStyle.SLS_SOLID
+        boardSegment.layer = layer
+        segments.append(boardSegment)
+    board.create_items(segments)
+
 def board_edge(x0, x1, y0, y1, scale):
     arcTrack = BoardSegment()
     arcTrack.start = Vector2.from_xy_mm(x0/scale*1000, -y0/scale*1000)
@@ -30,65 +65,73 @@ if __name__=='__main__':
     height_metres = 8000
     scale = 25000
 
-    ### CREATE COASTLINE ###
+    items_to_add = []
 
-
-    clark_island_geometry = "clark_island_geometry.pckl"
-    with open('clark_island_geometry.pckl', 'rb') as file:
-        clark_island_geometry = pickle.load(file)
-    island = PolyLine()
-    points = list(zip(*clark_island_geometry))
-    points.reverse()  # flip winding direction
-    for x, y in points:
-        island.append(PolyLineNode.from_xy(from_mm(x/scale*1000), from_mm(-y/scale*1000)))
-    coastline_geometry = "coastline_gerometry.pckl"
-    with open('coastline_geometry.pckl', 'rb') as file:
-        coastline_geometry_ROI = pickle.load(file)
-    outline = PolyLine()
-    points = zip(*coastline_geometry_ROI)
-    for x, y in points:
-        outline.append(PolyLineNode.from_xy(from_mm(x/scale*1000), from_mm(-y/scale*1000)))
-    outline.append(PolyLineNode.from_xy(from_mm(200), from_mm(-200)))
-    outline.closed = True
-    polygon =  PolygonWithHoles()
-    polygon.outline = outline
-    polygon.add_hole(island)
-    zone = Zone()
-    zone.layers = ['BL_F_Cu']
-    zone.outline = polygon    
-    board.create_items(zone)
-
-    ### BOARD EDGES ###
-
-    edges = []   
-    edges.append(board_edge(-width_metres/2, +width_metres/2, +height_metres/2, +height_metres/2, scale))
-    edges.append(board_edge(-width_metres/2, +width_metres/2, -height_metres/2, -height_metres/2, scale))
-    edges.append(board_edge(+width_metres/2, +width_metres/2, +height_metres/2, -height_metres/2, scale))
-    edges.append(board_edge(-width_metres/2, -width_metres/2, +height_metres/2, -height_metres/2, scale))
-    board.create_items(edges)
-
-    ### COASTLINE ###
+    # ### CREATE HARBOUR ###
+    # with open('clark_island_geometry.pckl', 'rb') as file:
+    #     clark_island_geometry = pickle.load(file)
+    # island = PolyLine()
+    # points = list(zip(*clark_island_geometry))
+    # points.reverse()  # flip winding direction
+    # for x, y in points:
+    #     island.append(PolyLineNode.from_xy(from_mm(x/scale*1000), from_mm(-y/scale*1000)))
     # coastline_geometry = "coastline_gerometry.pckl"
-
     # with open('coastline_geometry.pckl', 'rb') as file:
     #     coastline_geometry_ROI = pickle.load(file)
-    # silkscreen_coastline = []
-
-    # for [x0, x1], [y0, y1] in coastline_geometry_ROI:
-    #     boardSegment = BoardSegment()
-    #     boardSegment.start = Vector2.from_xy_mm(x0/scale*1000, -y0/scale*1000)
-    #     boardSegment.end = Vector2.from_xy_mm(x1/scale*1000, -y1/scale*1000)
-    #     boardSegment.attributes.stroke.width = from_mm(1)
-    #     # arcTrack.attributes.stroke.style = StrokeLineStyle.SLS_SOLID
-    #     boardSegment.layer = 'BL_F_SilkS'
-    #     silkscreen_coastline.append(boardSegment)
-    # board.create_items(silkscreen_coastline)
-
+    # outline = PolyLine()
+    # points = zip(*coastline_geometry_ROI)
+    # for x, y in points:
+    #     outline.append(PolyLineNode.from_xy(from_mm(x/scale*1000), from_mm(-y/scale*1000)))
+    # outline.append(PolyLineNode.from_xy(from_mm(200), from_mm(-200)))
+    # outline.closed = True
+    # polygon =  PolygonWithHoles()
+    # polygon.outline = outline
+    # polygon.add_hole(island)
     # zone = Zone()
     # zone.layers = ['BL_F_Cu']
-    # zone.clearance = 0
-    # zone.outline([0,0,1,1])
+    # zone.outline = polygon    
+    # board.create_items(zone)
 
+    # ### BOARD EDGES ###
+
+    # edges = []   
+    # edges.append(board_edge(-width_metres/2, +width_metres/2, +height_metres/2, +height_metres/2, scale))
+    # edges.append(board_edge(-width_metres/2, +width_metres/2, -height_metres/2, -height_metres/2, scale))
+    # edges.append(board_edge(+width_metres/2, +width_metres/2, +height_metres/2, -height_metres/2, scale))
+    # edges.append(board_edge(-width_metres/2, -width_metres/2, +height_metres/2, -height_metres/2, scale))
+    # board.create_items(edges)
+
+    ### TRACKS ###
+
+    # with open('L2_tracks.pckl', 'rb') as file:
+    #     L2_tracks = pickle.load(file)
+    # create_line(L2_tracks, scale, layer = 'BL_B_Cu')
+    # with open('L3_tracks.pckl', 'rb') as file:
+    #     L3_tracks = pickle.load(file)
+    # create_line(L3_tracks, scale, layer = 'BL_B_Cu')
+
+    ### PLACE LEDS ###
+
+    with open('stations_geometry.pckl', 'rb') as file:
+        station_geometry = pickle.load(file)
+    
+    LEDs = []
+    for footprint in board.get_footprints():
+        reference = footprint.reference_field.text.value
+        if reference[0] == 'D' and int(reference[1:]) >= 100:
+            LEDs.append(footprint)
+    LEDs.sort(key=lambda LED: int(LED.reference_field.text.value[1:]))
+
+    for idx, station in enumerate(station_geometry):
+        vec = Vector2.from_xy_mm(station.pcb_x, station.pcb_y)
+        LEDs[idx].position = vec
+        LEDs[idx].orientation = Angle.from_degrees(station.orientation + 180)
+        via_offset = 1
+        via_offset_x = via_offset * math.cos(math.radians(station.orientation + 90))
+        via_offset_y = -via_offset * math.sin(math.radians(station.orientation + 90))
+        add_via(station.pcb_x + via_offset_x, station.pcb_y + via_offset_y, net = 'GND')
+    board.update_items(LEDs)
+    board.create_items(items_to_add)
 
     # # Load the GeoJSON file
     # with open(geojson_file, "r") as f:
