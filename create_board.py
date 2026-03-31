@@ -36,6 +36,20 @@ def get_pad_position(footprint, net):
             return pad.position.x/1e6, pad.position.y/1e6
     return None
 
+
+def get_pad_by_number(footprint, pad_number):
+    for pad in footprint.definition.pads:
+        if str(pad.number) == str(pad_number):
+            return pad
+    return None
+
+
+def get_pad_position_by_number(footprint, pad_number):
+    pad = get_pad_by_number(footprint, pad_number)
+    if pad is None:
+        return None
+    return pad.position.x / 1e6, pad.position.y / 1e6
+
 def calc_from_xy(
     x0: float,
     y0: float,
@@ -106,7 +120,7 @@ def format_station_name(name, wrap_at=14):
     return best_text
 
 
-def add_station_label(station, offset_mm=4.0, size_mm=3.0, layer=BoardLayer.BL_F_SilkS):
+def add_station_label(station, offset_mm=4.0, size_mm=3.0, layer=BoardLayer.BL_F_SilkS, flip_label_side=False):
     if not station.name:
         return
 
@@ -116,6 +130,9 @@ def add_station_label(station, offset_mm=4.0, size_mm=3.0, layer=BoardLayer.BL_F
     label_angle = (station.orientation + 90) % 360
     if 90 < label_angle < 270:
         label_angle = (station.orientation - 90) % 360
+
+    if flip_label_side:
+        label_angle = (label_angle + 180) % 360
 
     if 60 < label_angle < 120 or 240 < label_angle < 300:
         offset_mm += 0.5
@@ -213,8 +230,6 @@ def add_adjacent_via(footprint, offset_mm, angle, net, layer, width=0.5, backsid
         x = (s**2 * x1 + s * (y2 - y1) + x2)/(s**2 +1)
         y = (s**2 * y2 + s * (x2 - x1) + y1)/(s**2 +1)
         draw_line(x, y, pad_x + via_offset_x, pad_y + via_offset_y, width = width, net = net, layer = 'BL_B_Cu')
-
-
 def board_edge(x0, x1, y0, y1, scale):
     arcTrack = BoardSegment()
     arcTrack.start = Vector2.from_xy_mm(x0/scale*1000, -y0/scale*1000)
@@ -274,11 +289,11 @@ if __name__=='__main__':
 
     ### TRACKS ###
 
-    # with open('L2_tracks.pckl', 'rb') as file:
-    #     L2_tracks = pickle.load(file)
+    with open('L2_tracks.pckl', 'rb') as file:
+        L2_tracks = pickle.load(file)
     # create_line(L2_tracks, scale, layer = 'BL_B_Cu')
-    # with open('L3_tracks.pckl', 'rb') as file:
-    #     L3_tracks = pickle.load(file)
+    with open('L3_tracks.pckl', 'rb') as file:
+        L3_tracks = pickle.load(file)
     # create_line(L3_tracks, scale, layer = 'BL_B_Cu')
 
     ### PLACE LEDS ###
@@ -296,14 +311,13 @@ if __name__=='__main__':
     LEDs.sort(key=lambda LED: int(LED.reference_field.text.value[1:]))
 
     via_offset = 0.6
-    print(len(L2_station_geometry) + len(L3_station_geometry), len(LEDs))
     for idx, station in enumerate(L2_station_geometry):
         LEDs[idx].position = Vector2.from_xy_mm(station.pcb_x,station.pcb_y)
         LEDs[idx].orientation = Angle.from_degrees(station.orientation + 180)
         add_adjacent_via(LEDs[idx], via_offset, 90, 'GND', 'BL_F_Cu', width=0.5)
         add_adjacent_via(LEDs[idx], via_offset, 270, '+5V', 'BL_F_Cu', width=0.5, backside_power=True)
         add_station_outline(station)
-        add_station_label(station)
+        add_station_label(station, flip_label_side=(station.name == "UNSW High Street"))
 
     for idx, station in enumerate(L3_station_geometry):
         LEDs[idx + len(L2_station_geometry)].position = Vector2.from_xy_mm(station.pcb_x,station.pcb_y)
@@ -311,7 +325,7 @@ if __name__=='__main__':
         add_adjacent_via(LEDs[idx + len(L2_station_geometry)], via_offset, 90, 'GND', 'BL_F_Cu', width=0.5)
         add_adjacent_via(LEDs[idx + len(L2_station_geometry)], via_offset, 270, '+5V', 'BL_F_Cu', width=0.5, backside_power=True)
         add_station_outline(station)
-        add_station_label(station)
+        add_station_label(station, flip_label_side=True)
     board.update_items(LEDs)
     board.create_items(items_to_add)
 
