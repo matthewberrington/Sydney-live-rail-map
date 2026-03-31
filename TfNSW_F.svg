@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   viewBox="0 0 37.795273 37.795273"
+   version="1.1"
+   id="svg14"
+   sodipodi:docname="TfNSW_F.svg"
+   width="37.795273"
+   height="37.795273"
+   inkscape:version="1.2.2 (b0a8486541, 2022-12-01)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs18" />
+  <sodipodi:namedview
+     id="namedview16"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     showgrid="false"
+     inkscape:zoom="1.6275001"
+     inkscape:cx="262.05836"
+     inkscape:cy="267.58832"
+     inkscape:window-width="1854"
+     inkscape:window-height="1011"
+     inkscape:window-x="66"
+     inkscape:window-y="32"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg14" />
+  <path
+     id="path16"
+     style="fill:#000000;fill-opacity:1;fill-rule:nonzero;stroke:none;stroke-width:0.133333"
+     d="M 18.897542,0 C 8.476771,0 0,8.4777632 0,18.89707 c 0,10.420364 8.476771,18.898203 18.897542,18.898203 10.421007,0 18.897731,-8.477839 18.897731,-18.898203 C 37.795273,8.4777632 29.318549,0 18.897542,0 Z m 0,2.9699525 c 8.782866,0 15.927495,7.1457635 15.927495,15.9271175 0,8.783621 -7.144629,15.926918 -15.927495,15.926918 -8.782771,0 -15.9274383,-7.143297 -15.9274383,-15.926918 0,-8.781354 7.1446673,-15.9271175 15.9274383,-15.9271175">
+    <title
+       id="title7">Ring</title>
+  </path>
+  <path
+     id="path-3"
+     style="fill:#000000;fill-opacity:1;fill-rule:nonzero;stroke:none;stroke-width:0.133333"
+     d="m 14.547363,29.133296 c -0.1884,0 -0.376583,-0.107736 -0.376583,-0.376281 V 9.4479586 h 10.622541 c 0.215518,0 0.403522,0.1341351 0.403522,0.3765447 v 2.6085917 c 0,0.188485 -0.08104,0.430063 -0.376403,0.430063 h -6.777288 v 5.163723 h 6.21221 c 0.215415,0 0.349767,0.161622 0.349767,0.403681 v 2.527389 c 0,0.215424 -0.134352,0.376971 -0.349767,0.376971 h -6.21221 v 7.422093 c 0,0.241871 -0.188571,0.376281 -0.349663,0.376281 h -3.146126">
+    <title
+       id="title10">F</title>
+  </path>
+</svg>
