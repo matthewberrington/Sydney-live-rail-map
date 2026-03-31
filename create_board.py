@@ -1,6 +1,7 @@
 from kipy import KiCad
 import kipy
 from kipy.board_types import BoardText, BoardSegment, BoardArc, Via, Net, Track, ArcTrack, BoardSegment, Zone
+from kipy.proto.board.board_types_pb2 import BoardLayer
 from kipy.geometry import Vector2, Angle, PolygonWithHoles, PolyLineNode, PolyLine
 from kipy.util import from_mm
 from kipy.proto.common import HorizontalAlignment, VerticalAlignment, StrokeLineStyle
@@ -87,6 +88,115 @@ def create_line(line, scale, layer = 'BL_F_SilkS'):
         segments.append(boardSegment)
     board.create_items(segments)
 
+
+def format_station_name(name, wrap_at=14):
+    if len(name) <= wrap_at or " " not in name:
+        return name
+
+    words = name.split()
+    best_text = name
+    best_score = len(name)
+    for idx in range(1, len(words)):
+        line1 = " ".join(words[:idx])
+        line2 = " ".join(words[idx:])
+        score = max(len(line1), len(line2))
+        if score < best_score:
+            best_text = f"{line1}\n{line2}"
+            best_score = score
+    return best_text
+
+
+def add_station_label(station, offset_mm=4.0, size_mm=3.0, layer=BoardLayer.BL_F_SilkS):
+    if not station.name:
+        return
+
+    text = BoardText()
+    text.value = format_station_name(station.name)
+
+    label_angle = (station.orientation + 90) % 360
+    if 90 < label_angle < 270:
+        label_angle = (station.orientation - 90) % 360
+
+    if 60 < label_angle < 120 or 240 < label_angle < 300:
+        offset_mm += 0.5
+
+    text_x = round(station.pcb_x + offset_mm * math.cos(math.radians(label_angle)), 10)
+    text_y = round(station.pcb_y - offset_mm * math.sin(math.radians(label_angle)), 10)
+
+    text.layer = layer
+    text.position = Vector2.from_xy_mm(text_x, text_y)
+    text.attributes.font_name = "Carlito"
+    text.attributes.size = Vector2.from_xy_mm(size_mm, size_mm)
+    text.attributes.stroke_width = from_mm(0.12)
+    text.attributes.angle = 0
+    text.attributes.bold = True
+    text.attributes.multiline = "\n" in text.value
+    text.attributes.line_spacing = 0.8
+
+    if 80 < label_angle < 100:
+        text.attributes.vertical_alignment = VerticalAlignment.VA_BOTTOM
+        text.attributes.horizontal_alignment = HorizontalAlignment.HA_CENTER
+    elif 260 < label_angle < 280:
+        text.attributes.vertical_alignment = VerticalAlignment.VA_TOP
+        text.attributes.horizontal_alignment = HorizontalAlignment.HA_CENTER
+    else:
+        text.attributes.vertical_alignment = VerticalAlignment.VA_CENTER
+        if text_x >= station.pcb_x:
+            text.attributes.horizontal_alignment = HorizontalAlignment.HA_LEFT
+        else:
+            text.attributes.horizontal_alignment = HorizontalAlignment.HA_RIGHT
+
+    line_end_x = round(station.pcb_x + (offset_mm - 0.5) * math.cos(math.radians(label_angle)), 10)
+    line_end_y = round(station.pcb_y - (offset_mm - 0.5) * math.sin(math.radians(label_angle)), 10)
+    draw_line(station.pcb_x, station.pcb_y, line_end_x, line_end_y, width=0.6, layer='BL_F_SilkS')
+
+    items_to_add.append(text)
+
+
+def draw_station_rectangle(
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    angle: float = 0,
+    line_width: float = 0.4,
+    layer='BL_F_SilkS',
+):
+    hw = width / 2
+    hh = height / 2
+    corners = [(x - hw, y - hh), (x + hw, y - hh), (x + hw, y + hh), (x - hw, y + hh)]
+
+    theta = math.radians(angle)
+    cos_theta = math.cos(theta)
+    sin_theta = math.sin(theta)
+    rotated_corners = []
+    for cx, cy in corners:
+        dx = cx - x
+        dy = cy - y
+        rx = x + dx * -cos_theta - dy * sin_theta
+        ry = y + dx * sin_theta + dy * -cos_theta
+        rotated_corners.append((rx, ry))
+
+    for idx in range(4):
+        x1, y1 = rotated_corners[idx]
+        x2, y2 = rotated_corners[(idx + 1) % 4]
+        draw_line(x1, y1, x2, y2, width=line_width, layer=layer)
+
+
+def add_station_outline(station, width_mm=2.8, height_mm=2.0, line_width=0.4, layer='BL_F_SilkS'):
+    if not station.name:
+        return
+
+    draw_station_rectangle(
+        station.pcb_x,
+        station.pcb_y,
+        width_mm,
+        height_mm,
+        angle=station.orientation,
+        line_width=line_width,
+        layer=layer,
+    )
+
 def add_adjacent_via(footprint, offset_mm, angle, net, layer, width=0.5, backside_power = False):
     pad_x, pad_y = get_pad_position(footprint, net)
     via_offset_x = -offset_mm * math.cos(math.radians(footprint.orientation.degrees + angle))
@@ -164,18 +274,20 @@ if __name__=='__main__':
 
     ### TRACKS ###
 
-    with open('L2_tracks.pckl', 'rb') as file:
-        L2_tracks = pickle.load(file)
-    create_line(L2_tracks, scale, layer = 'BL_B_Cu')
-    with open('L3_tracks.pckl', 'rb') as file:
-        L3_tracks = pickle.load(file)
-    create_line(L3_tracks, scale, layer = 'BL_B_Cu')
+    # with open('L2_tracks.pckl', 'rb') as file:
+    #     L2_tracks = pickle.load(file)
+    # create_line(L2_tracks, scale, layer = 'BL_B_Cu')
+    # with open('L3_tracks.pckl', 'rb') as file:
+    #     L3_tracks = pickle.load(file)
+    # create_line(L3_tracks, scale, layer = 'BL_B_Cu')
 
     ### PLACE LEDS ###
 
-    with open('stations_geometry.pckl', 'rb') as file:
-        station_geometry = pickle.load(file)
-    
+    with open('L2_stations_geometry.pckl', 'rb') as file:
+        L2_station_geometry = pickle.load(file)
+    with open('L3_stations_geometry.pckl', 'rb') as file:
+        L3_station_geometry = pickle.load(file)
+
     LEDs = []
     for footprint in board.get_footprints():
         reference = footprint.reference_field.text.value
@@ -184,11 +296,22 @@ if __name__=='__main__':
     LEDs.sort(key=lambda LED: int(LED.reference_field.text.value[1:]))
 
     via_offset = 0.6
-    for idx, station in enumerate(station_geometry):
+    print(len(L2_station_geometry) + len(L3_station_geometry), len(LEDs))
+    for idx, station in enumerate(L2_station_geometry):
         LEDs[idx].position = Vector2.from_xy_mm(station.pcb_x,station.pcb_y)
         LEDs[idx].orientation = Angle.from_degrees(station.orientation + 180)
         add_adjacent_via(LEDs[idx], via_offset, 90, 'GND', 'BL_F_Cu', width=0.5)
         add_adjacent_via(LEDs[idx], via_offset, 270, '+5V', 'BL_F_Cu', width=0.5, backside_power=True)
+        add_station_outline(station)
+        add_station_label(station)
+
+    for idx, station in enumerate(L3_station_geometry):
+        LEDs[idx + len(L2_station_geometry)].position = Vector2.from_xy_mm(station.pcb_x,station.pcb_y)
+        LEDs[idx + len(L2_station_geometry)].orientation = Angle.from_degrees(station.orientation + 180)
+        add_adjacent_via(LEDs[idx + len(L2_station_geometry)], via_offset, 90, 'GND', 'BL_F_Cu', width=0.5)
+        add_adjacent_via(LEDs[idx + len(L2_station_geometry)], via_offset, 270, '+5V', 'BL_F_Cu', width=0.5, backside_power=True)
+        add_station_outline(station)
+        add_station_label(station)
     board.update_items(LEDs)
     board.create_items(items_to_add)
 

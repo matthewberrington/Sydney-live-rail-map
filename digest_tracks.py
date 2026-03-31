@@ -214,14 +214,15 @@ if __name__ == '__main__':
 
     stations = L2_stations + L2_pseudo_stations
     stations.sort(key=lambda station: station.chainage)
-
-    for station in stations:
-        print(station.map_y)
-
-    with open('stations_geometry.pckl', 'wb') as file:
+    with open('L2_stations_geometry.pckl', 'wb') as file:
         pickle.dump(stations, file)
-    # with open('L2_pseudo_stations_geometry.pckl', 'wb') as file:
-        # pickle.dump(L2_pseudo_stations, file)
     with open('L2_track_geometry.pckl', 'wb') as file:
         pickle.dump(L2_track, file)
+
+    stations = L3_stations + L3_pseudo_stations
+    stations.sort(key=lambda station: station.chainage)
+    with open('L3_stations_geometry.pckl', 'wb') as file:
+        pickle.dump(stations, file)
+    with open('L3_track_geometry.pckl', 'wb') as file:
+        pickle.dump(L3_track, file)
     plt.show()
