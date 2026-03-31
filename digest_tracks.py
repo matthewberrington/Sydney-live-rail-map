@@ -8,6 +8,8 @@ import matplotlib.pyplot as plt
 import pickle
 import numpy as np
 
+PCB_ORIGIN_MM = (148.5, 210.0)
+
 def cut_line_between(line, start_dist, end_dist):
     if start_dist >= end_dist:
         raise ValueError("start_dist must be less than end_dist")
@@ -173,7 +175,12 @@ if __name__ == '__main__':
     with open("export.geojson") as f:
         data = json.load(f)
 
-    projection = MapProjection(origin_lon = 151.22289335, origin_lat = -33.8937485, scale=1/25000)
+    projection = MapProjection(
+        origin_lon=151.22289335,
+        origin_lat=-33.8937485,
+        scale=1 / 25000,
+        pcb_origin_mm=PCB_ORIGIN_MM,
+    )
     # x_origin = 151.22287115
     # y_origin = -33.893729
 

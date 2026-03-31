@@ -5,11 +5,16 @@ from kipy.proto.board.board_types_pb2 import BoardLayer
 from kipy.geometry import Vector2, Angle, PolygonWithHoles, PolyLineNode, PolyLine
 from kipy.util import from_mm
 from kipy.proto.common import HorizontalAlignment, VerticalAlignment, StrokeLineStyle
+from MapProjection import MapProjection
 import json
 import matplotlib.pyplot as plt
 import math
 import pickle
 from matplotlib import colormaps
+
+MAP_ORIGIN_LON = 151.22289335
+MAP_ORIGIN_LAT = -33.8937485
+PCB_ORIGIN_MM = (148.5, 210.0)
 
 def get_net_by_name(name: str):
     nets = board.get_nets()
@@ -86,16 +91,18 @@ def draw_line(
     items_to_add.append(boardSegment)  # Store the segment for later addition
 
 
-def create_line(line, scale, layer = 'BL_F_SilkS'):
+def create_line(line, projection, layer='BL_F_SilkS'):
     segments = []
     for idx in range(len(line[0])-1):
         x0 = line[0][idx]
         x1 = line[0][idx+1]
         y0 = line[1][idx]
         y1 = line[1][idx+1]
+        start_x, start_y = projection.map_to_pcb(x0, y0)
+        end_x, end_y = projection.map_to_pcb(x1, y1)
         boardSegment = BoardSegment()
-        boardSegment.start = Vector2.from_xy_mm(x0/scale*1000, -y0/scale*1000)
-        boardSegment.end = Vector2.from_xy_mm(x1/scale*1000, -y1/scale*1000)
+        boardSegment.start = Vector2.from_xy_mm(start_x, start_y)
+        boardSegment.end = Vector2.from_xy_mm(end_x, end_y)
         boardSegment.attributes.stroke.width = from_mm(1)
         # arcTrack.attributes.stroke.style = StrokeLineStyle.SLS_SOLID
         boardSegment.layer = layer
@@ -230,13 +237,20 @@ def add_adjacent_via(footprint, offset_mm, angle, net, layer, width=0.5, backsid
         x = (s**2 * x1 + s * (y2 - y1) + x2)/(s**2 +1)
         y = (s**2 * y2 + s * (x2 - x1) + y1)/(s**2 +1)
         draw_line(x, y, pad_x + via_offset_x, pad_y + via_offset_y, width = width, net = net, layer = 'BL_B_Cu')
-def board_edge(x0, x1, y0, y1, scale):
+def board_edge(x0, x1, y0, y1, projection):
     arcTrack = BoardSegment()
-    arcTrack.start = Vector2.from_xy_mm(x0/scale*1000, -y0/scale*1000)
-    arcTrack.end = Vector2.from_xy_mm(x1/scale*1000, -y1/scale*1000)
+    start_x, start_y = projection.map_to_pcb(x0, y0)
+    end_x, end_y = projection.map_to_pcb(x1, y1)
+    arcTrack.start = Vector2.from_xy_mm(start_x, start_y)
+    arcTrack.end = Vector2.from_xy_mm(end_x, end_y)
     arcTrack.width = 1
     arcTrack.layer = 'BL_Edge_Cuts'
     return arcTrack
+
+
+def reproject_stations(stations, projection):
+    for station in stations:
+        station.pcb_x, station.pcb_y = projection.geo_to_pcb(station.longitude, station.latitude)
 
 if __name__=='__main__':
     try:
@@ -250,6 +264,12 @@ if __name__=='__main__':
     width_metres = 5000
     height_metres = 8000
     scale = 25000
+    projection = MapProjection(
+        origin_lon=MAP_ORIGIN_LON,
+        origin_lat=MAP_ORIGIN_LAT,
+        scale=1 / scale,
+        pcb_origin_mm=PCB_ORIGIN_MM,
+    )
 
     items_to_add = []
 
@@ -281,20 +301,20 @@ if __name__=='__main__':
     # ### BOARD EDGES ###
 
     # edges = []   
-    # edges.append(board_edge(-width_metres/2, +width_metres/2, +height_metres/2, +height_metres/2, scale))
-    # edges.append(board_edge(-width_metres/2, +width_metres/2, -height_metres/2, -height_metres/2, scale))
-    # edges.append(board_edge(+width_metres/2, +width_metres/2, +height_metres/2, -height_metres/2, scale))
-    # edges.append(board_edge(-width_metres/2, -width_metres/2, +height_metres/2, -height_metres/2, scale))
+    # edges.append(board_edge(-width_metres/2, +width_metres/2, +height_metres/2, +height_metres/2, projection))
+    # edges.append(board_edge(-width_metres/2, +width_metres/2, -height_metres/2, -height_metres/2, projection))
+    # edges.append(board_edge(+width_metres/2, +width_metres/2, +height_metres/2, -height_metres/2, projection))
+    # edges.append(board_edge(-width_metres/2, -width_metres/2, +height_metres/2, -height_metres/2, projection))
     # board.create_items(edges)
 
     ### TRACKS ###
 
     with open('L2_tracks.pckl', 'rb') as file:
         L2_tracks = pickle.load(file)
-    # create_line(L2_tracks, scale, layer = 'BL_B_Cu')
+    # create_line(L2_tracks, projection, layer='BL_B_Cu')
     with open('L3_tracks.pckl', 'rb') as file:
         L3_tracks = pickle.load(file)
-    # create_line(L3_tracks, scale, layer = 'BL_B_Cu')
+    # create_line(L3_tracks, projection, layer='BL_B_Cu')
 
     ### PLACE LEDS ###
 
@@ -302,6 +322,8 @@ if __name__=='__main__':
         L2_station_geometry = pickle.load(file)
     with open('L3_stations_geometry.pckl', 'rb') as file:
         L3_station_geometry = pickle.load(file)
+    reproject_stations(L2_station_geometry, projection)
+    reproject_stations(L3_station_geometry, projection)
 
     LEDs = []
     for footprint in board.get_footprints():

@@ -3,9 +3,10 @@ import numpy as np
 
 class MapProjection:
     """The 'Single Source of Truth' for map math."""
-    def __init__(self, origin_lon, origin_lat, scale=1.0):
+    def __init__(self, origin_lon, origin_lat, scale=1.0, pcb_origin_mm=(0.0, 0.0)):
         self.origin = (origin_lon, origin_lat)
         self.scale = scale
+        self.pcb_origin_mm = pcb_origin_mm
 
         # equatorial radius (m)
         self.a = 6378137
@@ -50,12 +51,16 @@ class MapProjection:
 
     def map_to_pcb(self, map_x, map_y):
         """Converts map coordinates to PCB coordinates."""
-        return map_x * self.scale * 1000, -map_y * self.scale * 1000
+        origin_x, origin_y = self.pcb_origin_mm
+        pcb_x = origin_x + map_x * self.scale * 1000
+        pcb_y = origin_y - map_y * self.scale * 1000
+        return pcb_x, pcb_y
 
     def pcb_to_map(self, pcb_x, pcb_y):
         """Converts PCB coordinates to map coordinates."""
-        map_x = pcb_x / self.scale / 1000
-        map_y = -pcb_y /self.scale / 1000
+        origin_x, origin_y = self.pcb_origin_mm
+        map_x = (pcb_x - origin_x) / self.scale / 1000
+        map_y = (origin_y - pcb_y) / self.scale / 1000
         return map_x, map_y
     
     def geo_to_pcb(self, lon, lat):

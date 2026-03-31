@@ -15,7 +15,7 @@ class Station:
     @property
     def pcb_position(self):
         """Calculates (x, y) using its track's projection."""
-        return self.track.projection.lonlat_to_pcb(self.longitude, self.latitude)
+        return self.track.projection.geo_to_pcb(self.longitude, self.latitude)
 
     @property
     def orientation(self):
