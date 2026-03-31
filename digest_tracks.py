@@ -165,7 +165,7 @@ def get_pseudo_stations(stations, track, minimum_distance):
             l = l1 + (j+1)*delta_l
             x, y = track.line_cartesian.interpolate(l).coords[0]
             lon, lat = projection.map_to_geo(x, y)
-            pseudo_station = Station(f'__PSEUDO__', lon, lat, track)
+            pseudo_station = Station('', lon, lat, track)
             pseudo_stations.append(pseudo_station)
     return pseudo_stations
     
