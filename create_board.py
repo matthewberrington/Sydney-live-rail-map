@@ -15,6 +15,8 @@ from matplotlib import colormaps
 MAP_ORIGIN_LON = 151.22289335
 MAP_ORIGIN_LAT = -33.8937485
 PCB_ORIGIN_MM = (148.5, 210.0)
+KICAD_TIMEOUT_MS = 15000
+CREATE_ITEMS_BATCH_SIZE = 500
 
 def get_net_by_name(name: str):
     nets = board.get_nets()
@@ -91,23 +93,44 @@ def draw_line(
     items_to_add.append(boardSegment)  # Store the segment for later addition
 
 
-def create_line(line, projection, layer='BL_F_SilkS'):
+def create_items_in_batches(items, batch_size=CREATE_ITEMS_BATCH_SIZE):
+    if not items:
+        return
+
+    for start in range(0, len(items), batch_size):
+        board.create_items(items[start:start + batch_size])
+
+
+def create_line(line, projection, layer='BL_F_SilkS', width=0.1):
+    if hasattr(line, "track_components"):
+        for track_component in line.track_components:
+            create_line(track_component, projection, layer=layer, width=width)
+        return
+
+    if hasattr(line, "map_x") and hasattr(line, "map_y"):
+        xs = line.map_x
+        ys = line.map_y
+    elif isinstance(line, tuple) and len(line) == 2:
+        xs, ys = line
+    else:
+        raise TypeError(f"Unsupported line geometry type: {type(line)}")
+
     segments = []
-    for idx in range(len(line[0])-1):
-        x0 = line[0][idx]
-        x1 = line[0][idx+1]
-        y0 = line[1][idx]
-        y1 = line[1][idx+1]
+    for idx in range(len(xs) - 1):
+        x0 = xs[idx]
+        x1 = xs[idx + 1]
+        y0 = ys[idx]
+        y1 = ys[idx + 1]
         start_x, start_y = projection.map_to_pcb(x0, y0)
         end_x, end_y = projection.map_to_pcb(x1, y1)
         boardSegment = BoardSegment()
         boardSegment.start = Vector2.from_xy_mm(start_x, start_y)
         boardSegment.end = Vector2.from_xy_mm(end_x, end_y)
-        boardSegment.attributes.stroke.width = from_mm(1)
+        boardSegment.attributes.stroke.width = from_mm(width)
         # arcTrack.attributes.stroke.style = StrokeLineStyle.SLS_SOLID
         boardSegment.layer = layer
         segments.append(boardSegment)
-    board.create_items(segments)
+    items_to_add.extend(segments)
 
 
 def format_station_name(name, wrap_at=14):
@@ -254,12 +277,12 @@ def reproject_stations(stations, projection):
 
 if __name__=='__main__':
     try:
-        kicad = KiCad()
+        kicad = KiCad(timeout_ms=KICAD_TIMEOUT_MS)
         print(f"Connected to KiCad {kicad.get_version()}")
     except BaseException as e:
         print(f"Not connected to KiCad: {e}")
+        raise
 
-    kicad = KiCad()
     board = kicad.get_board()
     width_metres = 5000
     height_metres = 8000
@@ -296,25 +319,31 @@ if __name__=='__main__':
     zone = Zone()
     zone.layers = ['BL_F_Cu']
     zone.outline = polygon    
-    board.create_items(zone)
+    create_items_in_batches([zone])
 
     # ### BOARD EDGES ###
 
-    # edges = []   
-    # edges.append(board_edge(-width_metres/2, +width_metres/2, +height_metres/2, +height_metres/2, projection))
-    # edges.append(board_edge(-width_metres/2, +width_metres/2, -height_metres/2, -height_metres/2, projection))
-    # edges.append(board_edge(+width_metres/2, +width_metres/2, +height_metres/2, -height_metres/2, projection))
-    # edges.append(board_edge(-width_metres/2, -width_metres/2, +height_metres/2, -height_metres/2, projection))
-    # board.create_items(edges)
+    edges = []   
+    edges.append(board_edge(-width_metres/2, +width_metres/2, +height_metres/2, +height_metres/2, projection))
+    edges.append(board_edge(-width_metres/2, +width_metres/2, -height_metres/2, -height_metres/2, projection))
+    edges.append(board_edge(+width_metres/2, +width_metres/2, +height_metres/2, -height_metres/2, projection))
+    edges.append(board_edge(-width_metres/2, -width_metres/2, +height_metres/2, -height_metres/2, projection))
+    board.create_items(edges)
 
     ### TRACKS ###
 
-    with open('L2_tracks.pckl', 'rb') as file:
-        L2_tracks = pickle.load(file)
-    # create_line(L2_tracks, projection, layer='BL_B_Cu')
-    with open('L3_tracks.pckl', 'rb') as file:
-        L3_tracks = pickle.load(file)
-    # create_line(L3_tracks, projection, layer='BL_B_Cu')
+    with open('L2_track_geometry.pckl', 'rb') as file:
+        L2_track_geometry = pickle.load(file)
+    # create_line(L2_track_geometry, projection, layer='BL_B_Cu')
+    with open('L3_track_geometry.pckl', 'rb') as file:
+        L3_track_geometry = pickle.load(file)
+    # create_line(L3_track_geometry, projection, layer='BL_B_Cu')
+
+    ### TRACKS ###
+    for train_line in ['T1', 'T2', 'T3', 'T4', 'T8', 'T9']:
+        with open(f'{train_line}_tracks_geometry.pckl', 'rb') as file:
+            tracks = pickle.load(file)
+        create_line(tracks, projection, layer='BL_F_Mask', width = 0.3)
 
     ### PLACE LEDS ###
 
@@ -349,7 +378,7 @@ if __name__=='__main__':
         add_station_outline(station)
         add_station_label(station, flip_label_side=True)
     board.update_items(LEDs)
-    board.create_items(items_to_add)
+    create_items_in_batches(items_to_add)
 
     # # Load the GeoJSON file
     # with open(geojson_file, "r") as f:

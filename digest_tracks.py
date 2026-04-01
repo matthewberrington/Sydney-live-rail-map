@@ -423,9 +423,6 @@ def write_light_rail_outputs(light_rail_line):
         pickle.dump(stations, file)
     with open(f"{light_rail_line.ref}_track_geometry.pckl", "wb") as file:
         pickle.dump(light_rail_line.track, file)
-    with open(f"{light_rail_line.ref}_tracks.pckl", "wb") as file:
-        pickle.dump((light_rail_line.track.map_x, light_rail_line.track.map_y), file)
-
 
 def is_train_relation(tags):
     ref = tags.get("ref")
