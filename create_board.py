@@ -11,12 +11,14 @@ import matplotlib.pyplot as plt
 import math
 import pickle
 from matplotlib import colormaps
+from shapely.geometry import GeometryCollection, LineString, MultiLineString, box
 
 MAP_ORIGIN_LON = 151.22289335
 MAP_ORIGIN_LAT = -33.8937485
 PCB_ORIGIN_MM = (148.5, 210.0)
 KICAD_TIMEOUT_MS = 15000
 CREATE_ITEMS_BATCH_SIZE = 500
+board_clip_rect = None
 
 def get_net_by_name(name: str):
     nets = board.get_nets()
@@ -129,20 +131,38 @@ def create_line(line, projection, layer='BL_F_SilkS', width=0.1):
         raise TypeError(f"Unsupported line geometry type: {type(line)}")
 
     segments = []
-    for idx in range(len(xs) - 1):
-        x0 = xs[idx]
-        x1 = xs[idx + 1]
-        y0 = ys[idx]
-        y1 = ys[idx + 1]
-        start_x, start_y = projection.map_to_pcb(x0, y0)
-        end_x, end_y = projection.map_to_pcb(x1, y1)
-        boardSegment = BoardSegment()
-        boardSegment.start = Vector2.from_xy_mm(start_x, start_y)
-        boardSegment.end = Vector2.from_xy_mm(end_x, end_y)
-        boardSegment.attributes.stroke.width = from_mm(width)
-        # arcTrack.attributes.stroke.style = StrokeLineStyle.SLS_SOLID
-        boardSegment.layer = layer
-        segments.append(boardSegment)
+    line_geometry = LineString(zip(xs, ys))
+    if board_clip_rect is not None:
+        line_geometry = line_geometry.intersection(board_clip_rect)
+
+    if line_geometry.is_empty:
+        return
+
+    if isinstance(line_geometry, LineString):
+        line_geometries = [line_geometry]
+    elif isinstance(line_geometry, MultiLineString):
+        line_geometries = list(line_geometry.geoms)
+    elif isinstance(line_geometry, GeometryCollection):
+        line_geometries = [
+            geometry for geometry in line_geometry.geoms if isinstance(geometry, LineString)
+        ]
+    else:
+        return
+
+    for line_part in line_geometries:
+        coords = list(line_part.coords)
+        for idx in range(len(coords) - 1):
+            x0, y0 = coords[idx]
+            x1, y1 = coords[idx + 1]
+            start_x, start_y = projection.map_to_pcb(x0, y0)
+            end_x, end_y = projection.map_to_pcb(x1, y1)
+            boardSegment = BoardSegment()
+            boardSegment.start = Vector2.from_xy_mm(start_x, start_y)
+            boardSegment.end = Vector2.from_xy_mm(end_x, end_y)
+            boardSegment.attributes.stroke.width = from_mm(width)
+            # arcTrack.attributes.stroke.style = StrokeLineStyle.SLS_SOLID
+            boardSegment.layer = layer
+            segments.append(boardSegment)
     items_to_add.extend(segments)
 
 
@@ -299,6 +319,12 @@ if __name__=='__main__':
     board = kicad.get_board()
     width_metres = 5000
     height_metres = 8000
+    board_clip_rect = box(
+        -width_metres / 2,
+        -height_metres / 2,
+        width_metres / 2,
+        height_metres / 2,
+    )
     scale = 25000
     projection = MapProjection(
         origin_lon=MAP_ORIGIN_LON,
