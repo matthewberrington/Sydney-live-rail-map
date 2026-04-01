@@ -11,13 +11,15 @@ import matplotlib.pyplot as plt
 import math
 import pickle
 from matplotlib import colormaps
-from shapely.geometry import GeometryCollection, LineString, MultiLineString, box
+from shapely.geometry import GeometryCollection, LineString, MultiLineString, MultiPolygon, Polygon, box
 
 MAP_ORIGIN_LON = 151.22289335
 MAP_ORIGIN_LAT = -33.8937485
 PCB_ORIGIN_MM = (148.5, 210.0)
 KICAD_TIMEOUT_MS = 15000
 CREATE_ITEMS_BATCH_SIZE = 500
+GROUND_NET_NAME = "GND"
+MIN_ZONE_AREA_MM2 = 1.0
 board_clip_rect = None
 
 def get_net_by_name(name: str):
@@ -114,6 +116,111 @@ def map_polyline_to_pcb_polyline(xs, ys, projection, reverse=False):
         polyline.append(PolyLineNode.from_xy(from_mm(pcb_x), from_mm(pcb_y)))
 
     return polyline
+
+
+def pcb_ring_to_polyline(coords):
+    polyline = PolyLine()
+    ring_points = list(coords)
+    if ring_points and ring_points[0] == ring_points[-1]:
+        ring_points = ring_points[:-1]
+
+    for pcb_x, pcb_y in ring_points:
+        polyline.append(PolyLineNode.from_xy(from_mm(pcb_x), from_mm(pcb_y)))
+
+    polyline.closed = True
+    return polyline
+
+
+def get_board_rect_pcb(projection, width_metres, height_metres):
+    top_left_x, top_left_y = projection.map_to_pcb(-width_metres / 2, height_metres / 2)
+    bottom_right_x, bottom_right_y = projection.map_to_pcb(width_metres / 2, -height_metres / 2)
+    return box(
+        min(top_left_x, bottom_right_x),
+        min(top_left_y, bottom_right_y),
+        max(top_left_x, bottom_right_x),
+        max(top_left_y, bottom_right_y),
+    )
+
+
+def project_map_geometry_to_pcb_polygon(geometry, projection):
+    xs, ys = geometry
+    pcb_x, pcb_y = projection.map_to_pcb(xs, ys)
+    return Polygon(zip(pcb_x, pcb_y)).buffer(0)
+
+
+def build_water_polygon(coastline_geometry, projection, board_rect_pcb):
+    xs, ys = coastline_geometry
+    pcb_x, pcb_y = projection.map_to_pcb(xs, ys)
+    coastline_coords = list(zip(pcb_x, pcb_y))
+    min_x, min_y, max_x, _ = board_rect_pcb.bounds
+    margin = max(max_x - min_x, board_rect_pcb.bounds[3] - min_y)
+
+    if coastline_coords[0][0] >= coastline_coords[-1][0]:
+        closure_points = [
+            (min_x - margin, min_y - margin),
+            (max_x + margin, min_y - margin),
+        ]
+    else:
+        closure_points = [
+            (max_x + margin, min_y - margin),
+            (min_x - margin, min_y - margin),
+        ]
+
+    return Polygon(coastline_coords + closure_points).buffer(0).intersection(board_rect_pcb)
+
+
+def iter_polygons(geometry):
+    if geometry.is_empty:
+        return
+    if isinstance(geometry, Polygon):
+        yield geometry
+        return
+    if isinstance(geometry, MultiPolygon):
+        for polygon in geometry.geoms:
+            yield polygon
+        return
+    if isinstance(geometry, GeometryCollection):
+        for child in geometry.geoms:
+            yield from iter_polygons(child)
+
+
+def create_zone_from_polygon(polygon, layer='BL_F_Cu', net_name=GROUND_NET_NAME):
+    zone = Zone()
+    zone.layers = [layer]
+    zone.outline = PolygonWithHoles()
+    zone.outline.outline = pcb_ring_to_polyline(polygon.exterior.coords)
+    for interior in polygon.interiors:
+        zone.outline.add_hole(pcb_ring_to_polyline(interior.coords))
+
+    net_object = get_net_by_name(net_name)
+    if net_object is not None:
+        zone.net = net_object
+
+    return zone
+
+
+def build_ground_pour_zones(projection, board_rect_pcb):
+    with open('coastline_geometry.pckl', 'rb') as file:
+        coastline_geometry_roi = pickle.load(file)
+    with open('clark_island_geometry.pckl', 'rb') as file:
+        clark_island_geometry = pickle.load(file)
+
+    water_polygon = build_water_polygon(coastline_geometry_roi, projection, board_rect_pcb)
+    island_polygon = project_map_geometry_to_pcb_polygon(clark_island_geometry, projection)
+
+    min_x, _, _, max_y = board_rect_pcb.bounds
+    exclusion_rect = box(min_x, 300.0, 150.0, max_y)
+
+    copper_geometry = board_rect_pcb.difference(exclusion_rect).difference(
+        water_polygon.difference(island_polygon)
+    )
+
+    zones = []
+    for polygon in iter_polygons(copper_geometry):
+        if polygon.area < MIN_ZONE_AREA_MM2:
+            continue
+        zones.append(create_zone_from_polygon(polygon))
+    return zones
 
 
 def create_line(line, projection, layer='BL_F_SilkS', width=0.1):
@@ -319,12 +426,7 @@ if __name__=='__main__':
     board = kicad.get_board()
     width_metres = 5000
     height_metres = 8000
-    board_clip_rect = box(
-        -width_metres / 2,
-        -height_metres / 2,
-        width_metres / 2,
-        height_metres / 2,
-    )
+    board_clip_rect = box(-width_metres / 2, -height_metres / 2, width_metres / 2, height_metres / 2)
     scale = 25000
     projection = MapProjection(
         origin_lon=MAP_ORIGIN_LON,
@@ -332,35 +434,12 @@ if __name__=='__main__':
         scale=1 / scale,
         pcb_origin_mm=PCB_ORIGIN_MM,
     )
+    board_rect_pcb = get_board_rect_pcb(projection, width_metres, height_metres)
 
     items_to_add = []
 
-    # ### CREATE HARBOUR ###
-    with open('clark_island_geometry.pckl', 'rb') as file:
-        clark_island_geometry = pickle.load(file)
-    island = map_polyline_to_pcb_polyline(
-        clark_island_geometry[0],
-        clark_island_geometry[1],
-        projection,
-        reverse=True,
-    )
-    coastline_geometry = "coastline_gerometry.pckl"
-    with open('coastline_geometry.pckl', 'rb') as file:
-        coastline_geometry_ROI = pickle.load(file)
-    outline = map_polyline_to_pcb_polyline(
-        coastline_geometry_ROI[0],
-        coastline_geometry_ROI[1],
-        projection,
-    )
-    outline.append(PolyLineNode.from_xy(from_mm(200), from_mm(-200)))
-    outline.closed = True
-    polygon =  PolygonWithHoles()
-    polygon.outline = outline
-    polygon.add_hole(island)
-    zone = Zone()
-    zone.layers = ['BL_F_Cu']
-    zone.outline = polygon    
-    create_items_in_batches([zone])
+    # ### CREATE TOP COPPER GROUND POUR ###
+    create_items_in_batches(build_ground_pour_zones(projection, board_rect_pcb))
 
     # ### BOARD EDGES ###
 
