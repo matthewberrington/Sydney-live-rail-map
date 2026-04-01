@@ -101,6 +101,19 @@ def create_items_in_batches(items, batch_size=CREATE_ITEMS_BATCH_SIZE):
         board.create_items(items[start:start + batch_size])
 
 
+def map_polyline_to_pcb_polyline(xs, ys, projection, reverse=False):
+    polyline = PolyLine()
+    points = list(zip(xs, ys))
+    if reverse:
+        points.reverse()
+
+    for map_x, map_y in points:
+        pcb_x, pcb_y = projection.map_to_pcb(map_x, map_y)
+        polyline.append(PolyLineNode.from_xy(from_mm(pcb_x), from_mm(pcb_y)))
+
+    return polyline
+
+
 def create_line(line, projection, layer='BL_F_SilkS', width=0.1):
     if hasattr(line, "track_components"):
         for track_component in line.track_components:
@@ -299,18 +312,20 @@ if __name__=='__main__':
     # ### CREATE HARBOUR ###
     with open('clark_island_geometry.pckl', 'rb') as file:
         clark_island_geometry = pickle.load(file)
-    island = PolyLine()
-    points = list(zip(*clark_island_geometry))
-    points.reverse()  # flip winding direction
-    for x, y in points:
-        island.append(PolyLineNode.from_xy(from_mm(x/scale*1000), from_mm(-y/scale*1000)))
+    island = map_polyline_to_pcb_polyline(
+        clark_island_geometry[0],
+        clark_island_geometry[1],
+        projection,
+        reverse=True,
+    )
     coastline_geometry = "coastline_gerometry.pckl"
     with open('coastline_geometry.pckl', 'rb') as file:
         coastline_geometry_ROI = pickle.load(file)
-    outline = PolyLine()
-    points = zip(*coastline_geometry_ROI)
-    for x, y in points:
-        outline.append(PolyLineNode.from_xy(from_mm(x/scale*1000), from_mm(-y/scale*1000)))
+    outline = map_polyline_to_pcb_polyline(
+        coastline_geometry_ROI[0],
+        coastline_geometry_ROI[1],
+        projection,
+    )
     outline.append(PolyLineNode.from_xy(from_mm(200), from_mm(-200)))
     outline.closed = True
     polygon =  PolygonWithHoles()
