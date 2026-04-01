@@ -1,26 +1,64 @@
+import argparse
+import json
+import pickle
+import sys
+from collections import defaultdict
+from dataclasses import dataclass
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+from shapely.geometry import GeometryCollection, LineString, MultiLineString, Point
+from shapely.ops import linemerge, unary_union
+
+from MapProjection import MapProjection
 from Station import Station
 from Track import Track
-from MapProjection import MapProjection
-from shapely.geometry import LineString, Point
-from shapely.ops import linemerge, unary_union
-import json
-import matplotlib.pyplot as plt
-import pickle
-import numpy as np
+
+sys.modules.setdefault("digest_tracks", sys.modules[__name__])
 
 PCB_ORIGIN_MM = (148.5, 210.0)
+LIGHT_RAIL_INPUT_PATH = "lightrail.geojson"
+TRAIN_INPUT_CANDIDATES = ("train.geojson", "trains.geojson")
+LIGHT_RAIL_INTERPOLATION_POINTS = 3000
 
-def cut_line_between(line, start_dist, end_dist):
-    if start_dist >= end_dist:
-        raise ValueError("start_dist must be less than end_dist")
-    start_cut = cut_line(line, start_dist)
-    if start_cut is None:
-        return None
-    sub_line = start_cut[1]
-    end_cut = cut_line(sub_line, end_dist - start_dist)
-    if end_cut is None:
-        return sub_line
-    return end_cut[0]
+
+@dataclass(frozen=True)
+class LightRailLineSpec:
+    ref: str
+    destination_a: str
+    destination_b: str
+    pseudo_station_spacing_m: float = 75.0
+
+
+@dataclass
+class LightRailLineGeometry:
+    ref: str
+    track: Track
+    stations: list[Station]
+    pseudo_stations: list[Station]
+
+
+@dataclass
+class RouteGeometryGroup:
+    ref: str
+    mode: str
+    relation_names: tuple[str, ...]
+    destinations: tuple[str, ...]
+    geometry_geo: LineString | MultiLineString
+    geometry_map: LineString | MultiLineString
+    track_components: list[Track]
+
+
+LightRailLineGeometry.__module__ = "digest_tracks"
+RouteGeometryGroup.__module__ = "digest_tracks"
+
+
+LIGHT_RAIL_SPECS = (
+    LightRailLineSpec("L2", "Randwick", "Circular Quay"),
+    LightRailLineSpec("L3", "Juniors Kingsford", "Circular Quay"),
+)
+
 
 def cut_line(line, distance):
     if distance <= 0.0:
@@ -29,151 +67,476 @@ def cut_line(line, distance):
         return LineString(line), None
 
     coords = list(line.coords)
-    for i, p in enumerate(coords):
-        pd = line.project(Point(p))
-        if pd == distance:
-            return LineString(coords[:i+1]), LineString(coords[i:])
-        if pd > distance:
-            prev_p = Point(coords[i-1])
-            next_p = Point(p)
-            ratio = (distance - line.project(prev_p)) / (line.project(next_p) - line.project(prev_p))
-            x = prev_p.x + ratio * (next_p.x - prev_p.x)
-            y = prev_p.y + ratio * (next_p.y - prev_p.y)
-            cut_point = (x, y)
+    for index, point in enumerate(coords):
+        projected_distance = line.project(Point(point))
+        if projected_distance == distance:
+            return LineString(coords[: index + 1]), LineString(coords[index:])
+        if projected_distance > distance:
+            previous_point = Point(coords[index - 1])
+            next_point = Point(point)
+            ratio = (distance - line.project(previous_point)) / (
+                line.project(next_point) - line.project(previous_point)
+            )
+            cut_point = (
+                previous_point.x + ratio * (next_point.x - previous_point.x),
+                previous_point.y + ratio * (next_point.y - previous_point.y),
+            )
             return (
-                LineString(coords[:i] + [cut_point]),
-                LineString([cut_point] + coords[i:])
+                LineString(coords[:index] + [cut_point]),
+                LineString([cut_point] + coords[index:]),
             )
     return None
 
-def project_stations_onto_track(track, stationsA, stationsB):
-    stations = get_station_midpoint(stationsA, stationsB)
 
-    # Project each station onto the line
-    stations_projected = []
-    for station in stations:
-        pt = Point(station.longitude, station.latitude)
-        s = track.line_spherical.project(pt)
-        proj_pt = track.line_spherical.interpolate(s)
-        station_projected = Station(station.name, *proj_pt.coords[0], track)
-        stations_projected.append(station_projected)
-    
-    return stations_projected
+def cut_line_between(line, start_dist, end_dist):
+    if start_dist >= end_dist:
+        raise ValueError("start_dist must be less than end_dist")
 
-def split_track_by_stations_inclusive(track, stations):
+    start_cut = cut_line(line, start_dist)
+    if start_cut is None:
+        return None
 
-    major_nodes = stations
-    # Create segments between consecutive projected points
-    segments = []
-    for i in range(len(major_nodes) - 1):
-        node1 = major_nodes[i]
-        node2 = major_nodes[i+1]
-        point1 = Point(*node1.get_displacement())
-        point2 = Point(*node2.get_displacement())
-        length1 = track.get_line_cartesian().project(point1)
-        length2 = track.get_line_cartesian().project(point2)
-        segment = cut_line_between(track.get_line_cartesian(), length1, length2)
-        segments.append({
-            'from': node1.name,
-            'to': node2.name,
-            'line': segment
-        })
+    sub_line = start_cut[1]
+    end_cut = cut_line(sub_line, end_dist - start_dist)
+    if end_cut is None:
+        return sub_line
+    return end_cut[0]
 
-    return segments
 
-def to_ordered_coords(segments):
-    merged = linemerge(unary_union(segments))
-    if merged.geom_type == "MultiLineString":
-        ordered_coords = [list(ls.coords) for ls in merged.geoms]
-    else:
-        ordered_coords = list(merged.coords)
-    return ordered_coords
-
-def evenly_spaced_points(xs, ys, N):
-    xs, ys = np.array(xs), np.array(ys)
+def evenly_spaced_points(xs, ys, count):
+    xs = np.array(xs)
+    ys = np.array(ys)
     dx = np.diff(xs)
     dy = np.diff(ys)
-    seg_lengths = np.sqrt(dx**2 + dy**2)
-    cumulative = np.insert(np.cumsum(seg_lengths), 0, 0)
-    total_length = cumulative[-1]
-    target_d = np.linspace(0, total_length, N)
-    x_interp = np.interp(target_d, cumulative, xs)
-    y_interp = np.interp(target_d, cumulative, ys)
+    segment_lengths = np.sqrt(dx**2 + dy**2)
+    cumulative = np.insert(np.cumsum(segment_lengths), 0, 0)
+    target_distance = np.linspace(0, cumulative[-1], count)
+    x_interp = np.interp(target_distance, cumulative, xs)
+    y_interp = np.interp(target_distance, cumulative, ys)
     return x_interp, y_interp
 
-def get_track(ref, to, projection):
+
+def load_json_data(path=None, default_candidates=()):
+    if path:
+        candidates = [Path(path)]
+    else:
+        candidates = [Path(candidate) for candidate in default_candidates]
+
+    if not candidates:
+        raise FileNotFoundError("No JSON input path was provided")
+
+    candidate_descriptions = []
+    for candidate in candidates:
+        candidate_descriptions.append(str(candidate))
+        if not candidate.exists():
+            continue
+        if candidate.is_dir():
+            raise IsADirectoryError(f"Expected a JSON file, got directory: {candidate}")
+        with open(candidate) as file:
+            return json.load(file), candidate
+
+    raise FileNotFoundError(
+        "No JSON file found. Checked: " + ", ".join(candidate_descriptions)
+    )
+
+
+def load_export_data(path=None):
+    return load_json_data(path=path, default_candidates=(LIGHT_RAIL_INPUT_PATH,))
+
+
+def load_train_data(path=None):
+    return load_json_data(path=path, default_candidates=TRAIN_INPUT_CANDIDATES)
+
+
+def iter_relation_tags(feature):
+    properties = feature.get("properties", {})
+    for relation in properties.get("@relations", []):
+        yield relation.get("reltags", {})
+
+
+def get_primary_relation_tags(feature):
+    properties = feature.get("properties", {})
+    relations = properties.get("@relations", [])
+    if not relations:
+        return None
+    return relations[0].get("reltags", {})
+
+
+def iter_line_geometries(feature):
+    geometry = feature["geometry"]
+    geometry_type = geometry["type"]
+    if geometry_type == "LineString":
+        yield LineString(geometry["coordinates"])
+    elif geometry_type == "MultiLineString":
+        for coords in geometry["coordinates"]:
+            yield LineString(coords)
+
+
+def merge_line_segments(segments):
+    if not segments:
+        raise ValueError("No line segments supplied")
+
+    merged = unary_union(segments)
+    if isinstance(merged, GeometryCollection):
+        line_geometries = [
+            geometry
+            for geometry in merged.geoms
+            if geometry.geom_type in {"LineString", "MultiLineString"}
+        ]
+        if not line_geometries:
+            raise ValueError("No line geometry found after merging segments")
+        merged = unary_union(line_geometries)
+
+    merged = linemerge(merged)
+    if merged.geom_type not in {"LineString", "MultiLineString"}:
+        raise ValueError(f"Unexpected merged geometry type: {merged.geom_type}")
+    return merged
+
+
+def explode_lines(geometry):
+    if geometry.geom_type == "LineString":
+        return [geometry]
+    if geometry.geom_type == "MultiLineString":
+        return list(geometry.geoms)
+    raise ValueError(f"Unsupported geometry type: {geometry.geom_type}")
+
+
+def build_track_from_segments(ref, segments, projection):
+    geometry = merge_line_segments(segments)
+    if geometry.geom_type != "LineString":
+        raise ValueError(f"{ref} resolved to {geometry.geom_type}, expected a single LineString")
+    longitudes, latitudes = zip(*geometry.coords)
+    return Track(ref, list(longitudes), list(latitudes), projection)
+
+
+def build_track_components(ref, geometry, projection):
+    components = []
+    exploded = sorted(explode_lines(geometry), key=lambda line: line.length, reverse=True)
+    for index, component in enumerate(exploded, start=1):
+        longitudes, latitudes = zip(*component.coords)
+        component_name = ref if len(exploded) == 1 else f"{ref}_{index}"
+        components.append(Track(component_name, list(longitudes), list(latitudes), projection))
+    return components
+
+
+def build_map_geometry(track_components):
+    map_segments = [track.line_cartesian for track in track_components]
+    if len(map_segments) == 1:
+        return map_segments[0]
+    return MultiLineString([list(segment.coords) for segment in map_segments])
+
+
+def collect_relation_segments(data, relation_filter):
+    grouped_segments = defaultdict(list)
+    relation_names = defaultdict(set)
+    destinations = defaultdict(set)
+
+    for feature in data["features"]:
+        segments = list(iter_line_geometries(feature))
+        if not segments:
+            continue
+
+        for tags in iter_relation_tags(feature):
+            if not relation_filter(tags):
+                continue
+
+            ref = tags["ref"]
+            grouped_segments[ref].extend(segments)
+
+            route_name = tags.get("name")
+            if route_name:
+                relation_names[ref].add(route_name)
+
+            destination = tags.get("to")
+            if destination:
+                destinations[ref].add(destination)
+
+    return grouped_segments, relation_names, destinations
+
+
+def get_route_segments(data, ref, destination):
     segments = []
     for feature in data["features"]:
-        geom = feature["geometry"]
-        geom_type = geom["type"]
-        properties = feature["properties"]
+        for tags in iter_relation_tags(feature):
+            if tags.get("ref") == ref and tags.get("to") == destination:
+                segments.extend(iter_line_geometries(feature))
+                break
+    return segments
 
-        if geom_type == "LineString":
-            if '@relations' in properties.keys():
-                if properties["@relations"][0]["reltags"]["to"] == to:
-                    if properties["@relations"][0]["reltags"]["ref"] == ref:
-                        segments.append(LineString(geom["coordinates"]))
-    lon, lat = list(zip(*to_ordered_coords(segments)))
-    track = Track(ref, lon, lat, projection)
-    return track
 
-def get_stations(track, destination = None):
+def get_light_rail_route_segments(data, ref, destination):
+    segments = []
+    for feature in data["features"]:
+        tags = get_primary_relation_tags(feature)
+        if tags is None:
+            continue
+        if tags.get("ref") == ref and tags.get("to") == destination:
+            segments.extend(iter_line_geometries(feature))
+    return segments
+
+
+def get_stations(track, data, ref, destination=None):
     stations = []
     for feature in data["features"]:
-        geom = feature["geometry"]
-        props = feature["properties"]
-        if geom["type"] == "Point":
-            if "railway" in props.keys() and props["railway"] == 'stop':
-                if '@relations' in props.keys():
-                    if props["@relations"][0]["reltags"]["to"] == destination or destination == None:
-                        if props["@relations"][0]["reltags"]["ref"] == track.name:
-                            station = Station(props["name"], *geom["coordinates"], track)
-                            stations.append(station)
+        geometry = feature["geometry"]
+        properties = feature.get("properties", {})
+        if geometry["type"] != "Point" or properties.get("railway") != "stop":
+            continue
+
+        for tags in iter_relation_tags(feature):
+            if tags.get("ref") != ref:
+                continue
+            if destination is not None and tags.get("to") != destination:
+                continue
+            stations.append(Station(properties["name"], *geometry["coordinates"], track))
+            break
+
     stations.sort(key=lambda station: station.chainage)
     return stations
 
-def get_track_midline(track1, track2, N, flip = True):
-    lon1_interp, lat1_interp = evenly_spaced_points(track1.longitudes, track1.latitudes, N)
-    lon2_interp, lat2_interp = evenly_spaced_points(track2.longitudes, track2.latitudes, N)
-    if flip:
-        lon2_interp = np.flip(lon2_interp)
-        lat2_interp = np.flip(lat2_interp)
-    track = Track(track1.name, (lon1_interp + lon2_interp)/2, (lat1_interp + lat2_interp)/2, projection)
-    return track
 
-def get_station_midpoint(stations1, stations2):
-    #error occurs if all station are not on same track
-    track = stations1[0].track
+def get_light_rail_stations(track, data, destination=None):
     stations = []
-    for station1 in stations1:
-        station2 = next((s for s in stations2 if s.name == station1.name), None)
-        if station2:
-            mid_lat = (station1.latitude + station2.latitude)/2
-            mid_lon = (station1.longitude + station2.longitude)/2
-            stations.append(Station(station1.name, mid_lon, mid_lat, track))
+    for feature in data["features"]:
+        geometry = feature["geometry"]
+        properties = feature.get("properties", {})
+        if geometry["type"] != "Point" or properties.get("railway") != "stop":
+            continue
+
+        tags = get_primary_relation_tags(feature)
+        if tags is None:
+            continue
+        if tags.get("ref") != track.name:
+            continue
+        if destination is not None and tags.get("to") != destination:
+            continue
+
+        stations.append(Station(properties["name"], *geometry["coordinates"], track))
+
+    stations.sort(key=lambda station: station.chainage)
     return stations
 
-def get_pseudo_stations(stations, track, minimum_distance):
+
+def get_station_midpoint(stations_a, stations_b):
+    track = stations_a[0].track
+    stations = []
+    for station_a in stations_a:
+        station_b = next((station for station in stations_b if station.name == station_a.name), None)
+        if station_b is None:
+            continue
+
+        midpoint_lon = (station_a.longitude + station_b.longitude) / 2
+        midpoint_lat = (station_a.latitude + station_b.latitude) / 2
+        stations.append(Station(station_a.name, midpoint_lon, midpoint_lat, track))
+    return stations
+
+
+def project_stations_onto_track(track, stations_a, stations_b):
+    station_midpoints = get_station_midpoint(stations_a, stations_b)
+    projected_stations = []
+    for station in station_midpoints:
+        point = Point(station.longitude, station.latitude)
+        chainage = track.line_spherical.project(point)
+        projected_point = track.line_spherical.interpolate(chainage)
+        projected_stations.append(Station(station.name, *projected_point.coords[0], track))
+    return projected_stations
+
+
+def get_track_midline(track_a, track_b, count, projection, flip=True):
+    lon_a, lat_a = evenly_spaced_points(track_a.longitudes, track_a.latitudes, count)
+    lon_b, lat_b = evenly_spaced_points(track_b.longitudes, track_b.latitudes, count)
+    if flip:
+        lon_b = np.flip(lon_b)
+        lat_b = np.flip(lat_b)
+    return Track(track_a.name, (lon_a + lon_b) / 2, (lat_a + lat_b) / 2, projection)
+
+
+def get_pseudo_stations(stations, track, projection, minimum_distance):
     pseudo_stations = []
-    for i in range(len(stations)-1):
-        station1 = stations[i]
-        station2 = stations[i+1]
-        
-        l1 = station1.chainage
-        l2 = station2.chainage
-        num_pseudo_stations = int((l2 - l1)//minimum_distance) -1
-        delta_l = (l2 - l1)/(num_pseudo_stations+1)
-        for j in range(num_pseudo_stations):
-            l = l1 + (j+1)*delta_l
-            x, y = track.line_cartesian.interpolate(l).coords[0]
-            lon, lat = projection.map_to_geo(x, y)
-            pseudo_station = Station('', lon, lat, track)
-            pseudo_stations.append(pseudo_station)
+    for index in range(len(stations) - 1):
+        station_a = stations[index]
+        station_b = stations[index + 1]
+
+        start_chainage = station_a.chainage
+        end_chainage = station_b.chainage
+        pseudo_station_count = int((end_chainage - start_chainage) // minimum_distance) - 1
+        if pseudo_station_count <= 0:
+            continue
+        spacing = (end_chainage - start_chainage) / (pseudo_station_count + 1)
+
+        for pseudo_index in range(pseudo_station_count):
+            chainage = start_chainage + (pseudo_index + 1) * spacing
+            map_x, map_y = track.line_cartesian.interpolate(chainage).coords[0]
+            longitude, latitude = projection.map_to_geo(map_x, map_y)
+            pseudo_stations.append(Station("", longitude, latitude, track))
+
     return pseudo_stations
-    
-if __name__ == '__main__':
-    with open("export.geojson") as f:
-        data = json.load(f)
+
+
+def build_light_rail_line(spec, data, projection):
+    segments_a = get_light_rail_route_segments(data, spec.ref, spec.destination_a)
+    segments_b = get_light_rail_route_segments(data, spec.ref, spec.destination_b)
+    missing_destinations = []
+    if not segments_a:
+        missing_destinations.append(spec.destination_a)
+    if not segments_b:
+        missing_destinations.append(spec.destination_b)
+    if missing_destinations:
+        joined_destinations = ", ".join(missing_destinations)
+        raise ValueError(f"Missing {spec.ref} route segments for: {joined_destinations}")
+
+    track_a = build_track_from_segments(
+        spec.ref,
+        segments_a,
+        projection,
+    )
+    track_b = build_track_from_segments(
+        spec.ref,
+        segments_b,
+        projection,
+    )
+    track = get_track_midline(
+        track_a,
+        track_b,
+        LIGHT_RAIL_INTERPOLATION_POINTS,
+        projection,
+    )
+
+    stations_a = get_light_rail_stations(track, data, destination=spec.destination_a)
+    stations_b = get_light_rail_stations(track, data, destination=spec.destination_b)
+    stations = project_stations_onto_track(track, stations_a, stations_b)
+    pseudo_stations = get_pseudo_stations(
+        stations,
+        track,
+        projection,
+        minimum_distance=spec.pseudo_station_spacing_m,
+    )
+    return LightRailLineGeometry(spec.ref, track, stations, pseudo_stations)
+
+
+def write_light_rail_outputs(light_rail_line):
+    stations = sorted(
+        light_rail_line.stations + light_rail_line.pseudo_stations,
+        key=lambda station: station.chainage,
+    )
+    with open(f"{light_rail_line.ref}_stations_geometry.pckl", "wb") as file:
+        pickle.dump(stations, file)
+    with open(f"{light_rail_line.ref}_track_geometry.pckl", "wb") as file:
+        pickle.dump(light_rail_line.track, file)
+    with open(f"{light_rail_line.ref}_tracks.pckl", "wb") as file:
+        pickle.dump((light_rail_line.track.map_x, light_rail_line.track.map_y), file)
+
+
+def is_train_relation(tags):
+    ref = tags.get("ref")
+    route = tags.get("route")
+    network = (tags.get("network") or "").lower()
+
+    if not ref:
+        return False
+    if route in {"train", "subway"}:
+        return True
+    if ref.startswith(("T", "M")) and "light rail" not in network:
+        return True
+    return False
+
+
+def build_train_route_groups(data, projection):
+    grouped_segments = defaultdict(list)
+    relation_names = defaultdict(set)
+    destinations = defaultdict(set)
+
+    for feature in data["features"]:
+        properties = feature.get("properties", {})
+        if not is_train_relation(properties):
+            continue
+
+        segments = list(iter_line_geometries(feature))
+        if not segments:
+            continue
+
+        ref = properties["ref"]
+        grouped_segments[ref].extend(segments)
+
+        route_name = properties.get("name")
+        if route_name:
+            relation_names[ref].add(route_name)
+
+        destination = properties.get("to")
+        if destination:
+            destinations[ref].add(destination)
+
+    route_groups = {}
+    for ref, segments in sorted(grouped_segments.items()):
+        geometry = merge_line_segments(segments)
+        track_components = build_track_components(ref, geometry, projection)
+        route_groups[ref] = RouteGeometryGroup(
+            ref=ref,
+            mode="train",
+            relation_names=tuple(sorted(relation_names[ref])),
+            destinations=tuple(sorted(destinations[ref])),
+            geometry_geo=geometry,
+            geometry_map=build_map_geometry(track_components),
+            track_components=track_components,
+        )
+    return route_groups
+
+
+def sanitise_ref_for_filename(ref):
+    return "".join(character if character.isalnum() else "_" for character in ref)
+
+
+def write_train_route_outputs(route_groups):
+    output_paths = {}
+    for ref, route_group in route_groups.items():
+        filename = f"{sanitise_ref_for_filename(ref)}_tracks_geometry.pckl"
+        with open(filename, "wb") as file:
+            pickle.dump(route_group, file)
+        output_paths[ref] = filename
+    return output_paths
+
+
+def collect_available_route_refs(data):
+    refs = set()
+    for feature in data["features"]:
+        properties = feature.get("properties", {})
+        direct_ref = properties.get("ref")
+        if direct_ref:
+            refs.add(direct_ref)
+        for tags in iter_relation_tags(feature):
+            ref = tags.get("ref")
+            if ref:
+                refs.add(ref)
+    return sorted(refs)
+
+
+def plot_outputs(light_rail_lines, train_route_groups):
+    for line in light_rail_lines.values():
+        plt.plot(line.track.map_x, line.track.map_y, color="lightgrey")
+        for station in line.stations:
+            plt.plot(station.map_x, station.map_y, marker="s", color="r")
+        for station in line.pseudo_stations:
+            plt.plot(station.map_x, station.map_y, marker="*", color="b")
+
+    for route_group in train_route_groups.values():
+        for track in route_group.track_components:
+            plt.plot(track.map_x, track.map_y, color="black", linewidth=0.8)
+
+    plt.gca().axis("equal")
+    plt.show()
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input", help="Path to the light rail geojson/json file")
+    parser.add_argument("--train-input", help="Path to the train geojson/json file")
+    parser.add_argument("--plot", action="store_true", help="Show a debug plot")
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    light_rail_data, light_rail_input_path = load_export_data(args.input)
 
     projection = MapProjection(
         origin_lon=151.22289335,
@@ -181,55 +544,53 @@ if __name__ == '__main__':
         scale=1 / 25000,
         pcb_origin_mm=PCB_ORIGIN_MM,
     )
-    # x_origin = 151.22287115
-    # y_origin = -33.893729
 
-    N_interp = 3000
-    L2A_track = get_track('L2', 'Randwick', projection)
-    L2B_track = get_track('L2', 'Circular Quay', projection)
-    L2_track = get_track_midline(L2A_track, L2B_track, N_interp)
+    light_rail_lines = {}
+    skipped_light_rail_lines = {}
+    for spec in LIGHT_RAIL_SPECS:
+        try:
+            line = build_light_rail_line(spec, light_rail_data, projection)
+        except ValueError as error:
+            skipped_light_rail_lines[spec.ref] = str(error)
+            continue
 
-    L3A_track = get_track('L3', 'Juniors Kingsford', projection)
-    L3B_track = get_track('L3', 'Circular Quay', projection)
-    L3_track = get_track_midline(L3A_track, L3B_track, N_interp)
+        write_light_rail_outputs(line)
+        light_rail_lines[spec.ref] = line
 
-    L2_stationsA = get_stations(L2_track, destination = 'Randwick')
-    L2_stationsB = get_stations(L2_track, destination = 'Circular Quay')
-    L2_stations = project_stations_onto_track(L2_track, L2_stationsA, L2_stationsB)
-    print(L2_stations[0].map_x)
-    print(L2_stations[0].pcb_x)
+    try:
+        train_data, train_input_path = load_train_data(args.train_input)
+        train_route_groups = build_train_route_groups(train_data, projection)
+        train_output_paths = write_train_route_outputs(train_route_groups)
+    except FileNotFoundError:
+        train_input_path = None
+        train_route_groups = {}
+        train_output_paths = {}
 
-    L3_stationsA = get_stations(L3_track, destination = 'Juniors Kingsford')
-    L3_stationsB = get_stations(L3_track, destination = 'Circular Quay')
-    L3_stations = project_stations_onto_track(L3_track, L3_stationsA, L3_stationsB)
+    if args.plot:
+        plot_outputs(light_rail_lines, train_route_groups)
 
-    ### Define pseudo-stations
+    print(f"Loaded light rail export from {light_rail_input_path}")
+    if light_rail_lines:
+        print(f"Wrote light rail outputs for: {', '.join(sorted(light_rail_lines))}")
+    if skipped_light_rail_lines:
+        print("Skipped light rail outputs for:")
+        for ref, message in skipped_light_rail_lines.items():
+            print(f"  {ref}: {message}")
 
-    L2_pseudo_stations = get_pseudo_stations(L2_stations, L2_track, minimum_distance = 75)
-    L3_pseudo_stations = get_pseudo_stations(L3_stations, L3_track, minimum_distance = 75)
+    if train_output_paths:
+        print(f"Loaded train export from {train_input_path}")
+        print("Wrote train route geometry for:")
+        for ref, filename in train_output_paths.items():
+            print(f"  {ref}: {filename}")
+    else:
+        if train_input_path is None:
+            print("No train geojson/json file was found.")
+        else:
+            available_refs = ", ".join(collect_available_route_refs(train_data))
+            print(f"Loaded train export from {train_input_path}")
+            print("No train routes were found in the current train export.")
+            print(f"Available route refs in this file: {available_refs}")
 
-    plt.plot(L2_track.map_x, L2_track.map_y, color = 'lightgrey')
-    plt.plot(L3_track.map_x, L3_track.map_y, color = 'lightgrey')
 
-    for station in L2_stations + L3_stations:
-        plt.plot(station.map_x, station.map_y, marker = 's', color = 'r')
-        plt.plot([station.map_x, station.map_x + 25*np.cos(np.deg2rad(station.orientation))], [station.map_y, station.map_y + 25*np.sin(np.deg2rad(station.orientation))], color = 'r')
-    for station in L2_pseudo_stations + L3_pseudo_stations:
-        plt.plot(station.map_x, station.map_y, marker = '*', color = 'b')
-        plt.plot([station.map_x, station.map_x + 25*np.cos(np.deg2rad(station.orientation))], [station.map_y, station.map_y + 25*np.sin(np.deg2rad(station.orientation))], color = 'b')
-    plt.gca().axis('equal')
-
-    stations = L2_stations + L2_pseudo_stations
-    stations.sort(key=lambda station: station.chainage)
-    with open('L2_stations_geometry.pckl', 'wb') as file:
-        pickle.dump(stations, file)
-    with open('L2_track_geometry.pckl', 'wb') as file:
-        pickle.dump(L2_track, file)
-
-    stations = L3_stations + L3_pseudo_stations
-    stations.sort(key=lambda station: station.chainage)
-    with open('L3_stations_geometry.pckl', 'wb') as file:
-        pickle.dump(stations, file)
-    with open('L3_track_geometry.pckl', 'wb') as file:
-        pickle.dump(L3_track, file)
-    plt.show()
+if __name__ == "__main__":
+    main()

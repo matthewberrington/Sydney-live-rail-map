@@ -274,29 +274,29 @@ if __name__=='__main__':
     items_to_add = []
 
     # ### CREATE HARBOUR ###
-    # with open('clark_island_geometry.pckl', 'rb') as file:
-    #     clark_island_geometry = pickle.load(file)
-    # island = PolyLine()
-    # points = list(zip(*clark_island_geometry))
-    # points.reverse()  # flip winding direction
-    # for x, y in points:
-    #     island.append(PolyLineNode.from_xy(from_mm(x/scale*1000), from_mm(-y/scale*1000)))
-    # coastline_geometry = "coastline_gerometry.pckl"
-    # with open('coastline_geometry.pckl', 'rb') as file:
-    #     coastline_geometry_ROI = pickle.load(file)
-    # outline = PolyLine()
-    # points = zip(*coastline_geometry_ROI)
-    # for x, y in points:
-    #     outline.append(PolyLineNode.from_xy(from_mm(x/scale*1000), from_mm(-y/scale*1000)))
-    # outline.append(PolyLineNode.from_xy(from_mm(200), from_mm(-200)))
-    # outline.closed = True
-    # polygon =  PolygonWithHoles()
-    # polygon.outline = outline
-    # polygon.add_hole(island)
-    # zone = Zone()
-    # zone.layers = ['BL_F_Cu']
-    # zone.outline = polygon    
-    # board.create_items(zone)
+    with open('clark_island_geometry.pckl', 'rb') as file:
+        clark_island_geometry = pickle.load(file)
+    island = PolyLine()
+    points = list(zip(*clark_island_geometry))
+    points.reverse()  # flip winding direction
+    for x, y in points:
+        island.append(PolyLineNode.from_xy(from_mm(x/scale*1000), from_mm(-y/scale*1000)))
+    coastline_geometry = "coastline_gerometry.pckl"
+    with open('coastline_geometry.pckl', 'rb') as file:
+        coastline_geometry_ROI = pickle.load(file)
+    outline = PolyLine()
+    points = zip(*coastline_geometry_ROI)
+    for x, y in points:
+        outline.append(PolyLineNode.from_xy(from_mm(x/scale*1000), from_mm(-y/scale*1000)))
+    outline.append(PolyLineNode.from_xy(from_mm(200), from_mm(-200)))
+    outline.closed = True
+    polygon =  PolygonWithHoles()
+    polygon.outline = outline
+    polygon.add_hole(island)
+    zone = Zone()
+    zone.layers = ['BL_F_Cu']
+    zone.outline = polygon    
+    board.create_items(zone)
 
     # ### BOARD EDGES ###
 

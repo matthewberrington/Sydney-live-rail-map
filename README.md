@@ -9,6 +9,7 @@ Plan of features:
 - [ ] Legend showing LED colour encoding
 - [ ] Seven segment display showing time-to-departure of next service from UNSW Anzac Parade
 - [ ] LEDs showing status of connecting rail network (T1, T2, T3, T4, T8, M1, M3, L1)
+- [ ] Silscreen tracks of other rail lines (eg, City Circle, Lines south of central)
 - [ ] Wi-Fi connectivity
 - [ ] Adjustable brightness
 - [ ] Train icons at interchanges on silkscreen (T in a circle)
