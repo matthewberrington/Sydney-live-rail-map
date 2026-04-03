@@ -290,7 +290,7 @@ def format_station_name(name, wrap_at=14):
     return best_text
 
 
-def add_station_label(station, offset_mm=4.0, size_mm=3.0, layer=BoardLayer.BL_F_SilkS, flip_label_side=False):
+def add_station_label(station, offset_mm=4.0, size_mm=2.5, layer=BoardLayer.BL_F_SilkS, flip_label_side=False):
     if not station.name:
         return
 
@@ -312,7 +312,7 @@ def add_station_label(station, offset_mm=4.0, size_mm=3.0, layer=BoardLayer.BL_F
 
     text.layer = layer
     text.position = Vector2.from_xy_mm(text_x, text_y)
-    text.attributes.font_name = "Carlito"
+    text.attributes.font_name = "Roboto Slab"
     text.attributes.size = Vector2.from_xy_mm(size_mm, size_mm)
     text.attributes.stroke_width = from_mm(0.12)
     text.attributes.angle = 0
@@ -333,8 +333,8 @@ def add_station_label(station, offset_mm=4.0, size_mm=3.0, layer=BoardLayer.BL_F
         else:
             text.attributes.horizontal_alignment = HorizontalAlignment.HA_RIGHT
 
-    line_end_x = round(station.pcb_x + (offset_mm - 0.5) * math.cos(math.radians(label_angle)), 10)
-    line_end_y = round(station.pcb_y - (offset_mm - 0.5) * math.sin(math.radians(label_angle)), 10)
+    line_end_x = round(station.pcb_x + (offset_mm - 1.0) * math.cos(math.radians(label_angle)), 10)
+    line_end_y = round(station.pcb_y - (offset_mm - 1.0) * math.sin(math.radians(label_angle)), 10)
     draw_line(station.pcb_x, station.pcb_y, line_end_x, line_end_y, width=0.6, layer='BL_F_SilkS')
 
     items_to_add.append(text)
@@ -438,10 +438,10 @@ if __name__=='__main__':
 
     items_to_add = []
 
-    # ### CREATE TOP COPPER GROUND POUR ###
+    ### CREATE TOP COPPER GROUND POUR ###
     create_items_in_batches(build_ground_pour_zones(projection, board_rect_pcb))
 
-    # ### BOARD EDGES ###
+    ### BOARD EDGES ###
 
     edges = []   
     edges.append(board_edge(-width_metres/2, +width_metres/2, +height_metres/2, +height_metres/2, projection))
@@ -454,10 +454,10 @@ if __name__=='__main__':
 
     with open('L2_track_geometry.pckl', 'rb') as file:
         L2_track_geometry = pickle.load(file)
-    # create_line(L2_track_geometry, projection, layer='BL_B_Cu')
+    create_line(L2_track_geometry, projection, layer='BL_B_Cu', width = 1)
     with open('L3_track_geometry.pckl', 'rb') as file:
         L3_track_geometry = pickle.load(file)
-    # create_line(L3_track_geometry, projection, layer='BL_B_Cu')
+    create_line(L3_track_geometry, projection, layer='BL_B_Cu', width = 1)
 
     ### TRACKS ###
     for train_line in ['T1', 'T2', 'T3', 'T4', 'T8', 'T9']:
@@ -499,69 +499,3 @@ if __name__=='__main__':
         add_station_label(station, flip_label_side=True)
     board.update_items(LEDs)
     create_items_in_batches(items_to_add)
-
-    # # Load the GeoJSON file
-    # with open(geojson_file, "r") as f:
-    #     data = json.load(f)
-
-
-    # lines_to_show = ("L2", "L3")
-    # x_origin = 151.22287115
-    # y_origin = -33.893729
-    
-    # scale = 25000
-    # x_scale = -1/scale * 111320000 * math.cos(-33.8727) #converts to metres at Sydney latitude
-    # y_scale = -1/scale * 111320000 #converts to metres
-    # board_origin = (297/2, 420/2)
-
-
-    # tracks_to_add = []
-    # # Loop through features and plot based on geometry type
-    # for feature in data["features"]:
-    #     geom = feature["geometry"]
-    #     geom_type = geom["type"]
-    #     coords = geom["coordinates"]
-    #     properties = feature["properties"]
-
-    #     if geom_type == "LineString":
-    #         if '@relations' in properties.keys():
-    #             if properties["@relations"][0]["reltags"]["ref"] in lines_to_show:
-    #                 xs, ys = evenly_spaced_points
-    #                 for i in range(len(xs) -1):
-    #                     x1 = (xs[i] - x_origin)*x_scale + board_origin[0]
-    #                     y1 = (ys[i] - y_origin)*y_scale + board_origin[1]
-    #                     x2 = (xs[i+1] - x_origin)*x_scale + board_origin[0]
-    #                     y2 = (ys[i+1] - y_origin)*y_scale + board_origin[1]
-    #                     width = 1
-    #                     arcTrack = Track()
-    #                     arcTrack.start = Vector2.from_xy_mm(x1, y1)
-    #                     arcTrack.end = Vector2.from_xy_mm(x2, y2)
-    #                     arcTrack.width = 1
-    #                     # arcTrack.attributes.stroke.style = StrokeLineStyle.SLS_SOLID
-    #                     arcTrack.layer = 'BL_F_Cu'
-    #                     # board.create_items(arcTrack)
-    #                     tracks_to_add.append(arcTrack)
-    #                     # plt.plot(xs, ys, color=properties["@relations"][0]["reltags"]["colour"])
-
-    # # Define coordinates in mm
-    # x1, y1 = 10, 10
-    # x2, y2 = 30, 10
-    # width = 1
-
-    # arcTrack = Track()
-    # arcTrack.start = Vector2.from_xy_mm(x1, y1)
-    # arcTrack.end = Vector2.from_xy_mm(x2, y2)
-    # arcTrack.width = 1
-    # # arcTrack.attributes.stroke.style = StrokeLineStyle.SLS_SOLID
-    # arcTrack.layer = 'BL_F_Cu'
-    # board.create_items(tracks_to_add)
-    # board.create_items(arcTrack)
-
-    # plt.figure()
-    # cmap = colormaps['hsv']
-    # i = 0
-    # for track in tracks_to_add:
-    #     plt.plot([track.start.x, track.end.x], [track.start.y, track.end.y], color = cmap(i%1))
-    #     i+=0.0001
-    # plt.show()
-    
